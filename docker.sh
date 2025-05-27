@@ -1,5 +1,5 @@
 #!/bin/bash
-
+sudo apt update && apt upgrade -y
 # Versi Docker Compose
 DOCKER_COMPOSE_VERSION="v2.24.5"
 
