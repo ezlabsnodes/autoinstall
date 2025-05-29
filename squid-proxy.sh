@@ -9,13 +9,6 @@ read -p "Enter proxy username: " PROXY_USER
 read -s -p "Enter proxy password: " PROXY_PASS
 echo ""
 
-# Disable interactive restart prompts (needrestart workaround)
-export NEEDRESTART_MODE=a
-
-# Update and upgrade system
-sudo DEBIAN_FRONTEND=noninteractive apt update
-sudo DEBIAN_FRONTEND=noninteractive apt upgrade -y
-
 # Install Squid and Apache2-utils for authentication
 sudo apt install -y squid apache2-utils
 
