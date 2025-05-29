@@ -9,89 +9,74 @@ read -p "Enter proxy username: " PROXY_USER
 read -s -p "Enter proxy password: " PROXY_PASS
 echo ""
 
+# Disable interactive restart prompts (needrestart workaround)
+export NEEDRESTART_MODE=a
+
 # Update and upgrade system
-sudo apt update
-sudo apt upgrade -y
+sudo DEBIAN_FRONTEND=noninteractive apt update
+sudo DEBIAN_FRONTEND=noninteractive apt upgrade -y
 
 # Install Squid and Apache2-utils for authentication
-sudo apt install squid apache2-utils -y
+sudo apt install -y squid apache2-utils
 
 # Enable Squid
 sudo systemctl enable squid
 
 # Configure Squid
 sudo bash -c 'cat > /etc/squid/squid.conf <<EOF
-# Port used by Squid
 http_port 12323
-
-# Hide ISP information
 forwarded_for off
 request_header_access X-Forwarded-For deny all
 request_header_access Via deny all
 reply_header_access Via deny all
 via off
 header_replace Via ""
-
-# DNS
 dns_nameservers 8.8.8.8 8.8.4.4
-
-# Authentication
 auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/passwords
 auth_param basic realm proxy
 acl authenticated proxy_auth REQUIRED
 http_access allow authenticated
-
-# Default allow all other traffic
 http_access allow all
-
-# Cache configuration (optional)
 cache_dir ufs /var/spool/squid 100 16 256
 cache_mem 256 MB
 maximum_object_size 256 MB
-
-# Logging
 access_log /var/log/squid/access.log
 cache_log /var/log/squid/cache.log
 EOF'
 
-# Create password for authentication
+# Create password file
 echo "$PROXY_PASS" | sudo htpasswd -c -i /etc/squid/passwords "$PROXY_USER"
 
-# Change password file permissions
+# Secure the password file
 sudo chmod 644 /etc/squid/passwords
 sudo chown proxy:proxy /etc/squid/passwords
 
-# Create Squid cache directory
+# Initialize Squid cache
 sudo systemctl stop squid
 sudo rm -f /run/squid.pid
 sudo squid -z
 
-# Get public IP address
+# Get public IP
 IP_PUBLIC=$(curl -s ipinfo.io/ip)
 
-# Add public IP to Squid configuration
+# Add IP-specific config
 sudo bash -c "cat > /etc/squid/conf.d/ip1.conf <<EOF
 http_port $IP_PUBLIC:12323
 EOF"
 
-# Show updated message
-echo "File /etc/squid/conf.d/ip1.conf has been updated with public IP: $IP_PUBLIC"
-
-# Open port in firewall
+# Open firewall port
 sudo ufw allow 12323/tcp
 sudo ufw reload
 
-# Test Squid configuration
+# Test and restart Squid
 sudo squid -k parse
-
-# Restart Squid
 sudo systemctl restart squid
 
-# Output completion message
+# Output success
 echo -e "${RED}/////////////////////////////////////////////////////////////////////////////${RESET}"
 echo -e "${RED}Squid has been successfully configured${RESET}"
 echo -e "${RED}Access Proxy via:${RESET}"
 echo -e "${RED}${IP_PUBLIC}:12323${RESET}"
 echo -e "${RED}Username: $PROXY_USER${RESET}"
-echo -e "${RED}Password: [hidden - you entered it manually]${RESET}"
+echo -e "${RED}Password: [you entered it manually]${RESET}"
 echo -e "${RED}/////////////////////////////////////////////////////////////////////////////${RESET}"
