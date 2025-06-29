@@ -146,17 +146,25 @@ RECOMMENDED_SWAP=$((RAM_SIZE * 30 / 100))  # 30% of RAM
 
 if [ "$CURRENT_SWAP" -lt "$RECOMMENDED_SWAP" ]; then
     status "Current swap: ${CURRENT_SWAP}MB | Recommended: ${RECOMMENDED_SWAP}MB"
-    read -p "Create additional swapfile? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        SWAPFILE="/swapfile_${RECOMMENDED_SWAP}MB"
-        fallocate -l "${RECOMMENDED_SWAP}M" "$SWAPFILE"
-        chmod 600 "$SWAPFILE"
-        mkswap "$SWAPFILE"
-        swapon "$SWAPFILE"
-        echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
-        success "Created ${RECOMMENDED_SWAP}MB swapfile at $SWAPFILE"
+    read -p "Enter swap size in GB (e.g. 30 for 30GB) or press Enter for recommended size: " SWAP_SIZE_GB
+    
+    if [[ -n "$SWAP_SIZE_GB" && "$SWAP_SIZE_GB" =~ ^[0-9]+$ ]]; then
+        # User entered a number - use that for GB
+        SWAP_SIZE_MB=$((SWAP_SIZE_GB * 1024))
+        status "Creating ${SWAP_SIZE_GB}GB swapfile as requested..."
+    else
+        # Use recommended size
+        SWAP_SIZE_MB=$RECOMMENDED_SWAP
+        status "Creating recommended ${RECOMMENDED_SWAP}MB swapfile..."
     fi
+    
+    SWAPFILE="/swapfile_${SWAP_SIZE_MB}MB"
+    fallocate -l "${SWAP_SIZE_MB}M" "$SWAPFILE"
+    chmod 600 "$SWAPFILE"
+    mkswap "$SWAPFILE"
+    swapon "$SWAPFILE"
+    echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
+    success "Created ${SWAP_SIZE_MB}MB swapfile at $SWAPFILE"
 else
     success "Swap size adequate (${CURRENT_SWAP}MB)"
 fi
