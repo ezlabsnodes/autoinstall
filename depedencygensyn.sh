@@ -4,7 +4,6 @@ set -euo pipefail  # More strict error handling
 # ==========================================
 # Configuration Variables
 # ==========================================
-DOCKER_COMPOSE_VERSION="v2.26.1"  # Updated to latest version
 USERNAME=$(whoami)  # Get current username
 ARCH=$(uname -m)    # System architecture
 
@@ -123,35 +122,6 @@ if ! command_exists yarn; then
 else
     info "Yarn already installed: $(yarn --version)"
 fi
-
-# ==========================================
-# Docker Installation
-# ==========================================
-info "Checking Docker installation..."
-
-if ! command_exists docker; then
-    info "Installing Docker..."
-    
-    # Add Docker's official GPG key
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    
-    # Set up the repository
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    
-    # Install Docker
-    sudo apt-get update
-    install_packages docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    
-    # Add user to docker group
-    sudo usermod -aG docker $USERNAME
-    info "Docker installed. You'll need to log out and back in for group changes to take effect."
-else
-    info "Docker already installed: $(docker --version)"
-    info "Docker Compose already installed: $(docker compose version)"
-fi
 # ==========================================
 # Final Checks
 # ==========================================
@@ -162,8 +132,6 @@ info "=== Installed Versions ==="
 info "Node.js: $(node --version 2>/dev/null || echo 'Not installed')"
 info "npm: $(npm --version 2>/dev/null || echo 'Not installed')"
 info "Yarn: $(yarn --version 2>/dev/null || echo 'Not installed')"
-info "Docker: $(docker --version 2>/dev/null || echo 'Not installed')"
-info "Docker Compose: $(docker compose version 2>/dev/null || echo 'Not installed')"
 
 info "Installation completed successfully!"
 info "You may need to restart your shell or run 'source ~/.bashrc' for changes to take effect."
