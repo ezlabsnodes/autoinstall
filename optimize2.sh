@@ -1,122 +1,202 @@
 #!/bin/bash
 set -e
 
-# ==================== KONFIGURASI ====================
-MAX_OPEN_FILES=1048576
-SWAPINESS=10                     # Lebih rendah untuk minimize swap thrashing
-DIRTY_RATIO=30                   # Lebih agresif flush ke disk
-TCP_MAX_SYN_BACKLOG=16384
-KERNEL_PID_MAX=4194304
-OVERCOMMIT_RATIO=100             # Allow overcommit 100% RAM fisik + swap
-MIN_SWAP_SIZE=$((20*1024))       # Minimum 20GB swap space (dalam MB)
+# ==============================================
+# 1. FIRST DEFINE ALL FUNCTIONS AND VARIABLES
+# ==============================================
 
-# ==================== FUNGSI ====================
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Status functions
 status() { echo -e "\n${BLUE}>>> $*${NC}"; }
 success() { echo -e "${GREEN}✓ $*${NC}"; }
 warning() { echo -e "${YELLOW}⚠ $*${NC}"; }
 error() { echo -e "${RED}✗ $*${NC}"; exit 1; }
 
-# ==================== OPTIMASI MEMORY ====================
-optimize_memory() {
-    status "Konfigurasi memory management khusus 12GB RAM"
-    
-    # Hitung kebutuhan swap
-    local current_swap=$(free -m | awk '/Swap/{print $2}')
-    local current_swap_gb=$((current_swap/1024))
-    
-    if [ "$current_swap" -lt "$MIN_SWAP_SIZE" ]; then
-        warning "Swap saat ini ${current_swap_gb}GB (kurang dari minimum 20GB)"
-        
-        # Buat swap file tambahan
-        status "Membuat swap file tambahan..."
-        local additional_swap=$((MIN_SWAP_SIZE - current_swap + 1024)) # +1GB buffer
-        
-        # Cleanup old swapfile if exists
-        [[ -f /swapfile ]] && swapoff /swapfile && rm -f /swapfile
-        
-        # Create new swap
-        dd if=/dev/zero of=/swapfile bs=1M count=$additional_swap status=progress
-        chmod 600 /swapfile
-        mkswap /swapfile
-        swapon /swapfile
-        echo '/swapfile none swap sw 0 0' >> /etc/fstab
-        
-        success "Ditambahkan ${additional_swap}MB swap file (Total sekarang: $((current_swap + additional_swap))MB"
-    else
-        success "Swap sudah cukup (${current_swap_gb}GB)"
-    fi
+# System services to disable
+SERVICES_TO_DISABLE=(
+    avahi-daemon
+    cups
+    bluetooth
+    ModemManager
+)
 
-    # Kernel parameters khusus memory pressure
-    cat > /etc/sysctl.d/99-memory.conf <<EOF
-# Memory Management Extreme
-vm.swappiness=$SWAPINESS
-vm.dirty_ratio=$DIRTY_RATIO
-vm.dirty_background_ratio=5
-vm.overcommit_memory=2
-vm.overcommit_ratio=$OVERCOMMIT_RATIO
-vm.oom_kill_allocating_task=1
-vm.panic_on_oom=0
-vm.extfrag_threshold=500
-vm.min_free_kbytes=65536
+# ==============================================
+# 2. MAIN SCRIPT LOGIC - OPTIMIZED FOR AGGRESSIVE SWAP
+# ==============================================
 
-# Cache Pressure
-vm.vfs_cache_pressure=50
+# Check root
+if [ "$(id -u)" -ne 0 ]; then
+    error "Script must be run as root. Use sudo or switch to root user."
+fi
+
+# 1. System Limits Optimization
+status "Optimizing system limits..."
+
+# Configure system-wide limits
+if ! grep -q "# Kuzco Optimization" /etc/security/limits.conf; then
+    cat <<EOF >> /etc/security/limits.conf
+
+# Kuzco Optimization
+* soft nofile 1048576
+* hard nofile 1048576
+* soft nproc unlimited
+* hard nproc unlimited
+* soft memlock unlimited
+* hard memlock unlimited
+root soft nofile 1048576
+root hard nofile 1048576
+root soft nproc unlimited
+root hard nproc unlimited
+root soft memlock unlimited
+root hard memlock unlimited
 EOF
+    success "Added limits to /etc/security/limits.conf"
+else
+    success "System limits already configured (skipped)"
+fi
 
-    sysctl -p /etc/sysctl.d/99-memory.conf
-    success "Memory optimization applied for 12GB/20GB workload"
-}
+# Apply immediate session limits
+ulimit -n 1048576 >/dev/null 2>&1 || warning "Couldn't increase current session limits (reboot required)"
+success "Attempted to set immediate file descriptor limit"
 
-# ==================== OPTIMASI KHUSUS HIGH MEMORY LOAD ====================
-optimize_highmem() {
-    status "Tuning khusus high-memory workload"
-    
-    # Adjust OOM killer
-    echo 'vm.oom_kill_allocating_task = 1' >> /etc/sysctl.conf
-    
-    # Prioritize current process
-    echo 'kernel.sched_autogroup_enabled = 1' >> /etc/sysctl.conf
-    
-    # ZRAM configuration (jika tersedia)
-    if modprobe zram; then
-        echo "zstd" > /sys/block/zram0/comp_algorithm
-        echo "2" > /sys/block/zram0/max_comp_streams
-        MEM=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') * 1024 ))
-        echo $((MEM / 2)) > /sys/block/zram0/disksize
-        mkswap /dev/zram0
-        swapon /dev/zram0 -p 100
-        success "ZRAM configured for compression"
+# Configure systemd limits
+mkdir -p /etc/systemd/system.conf.d/
+cat <<EOF > /etc/systemd/system.conf.d/limits.conf
+[Manager]
+DefaultLimitNOFILE=1048576
+DefaultLimitNPROC=infinity
+DefaultLimitMEMLOCK=infinity
+EOF
+success "Configured systemd limits"
+
+# Configure pam limits
+if [ -f /etc/pam.d/common-session ] && ! grep -q "pam_limits.so" /etc/pam.d/common-session; then
+    echo "session required pam_limits.so" >> /etc/pam.d/common-session
+    success "Added PAM limits configuration"
+elif [ ! -f /etc/pam.d/common-session ]; then
+    warning "PAM common-session file not found"
+else
+    success "PAM limits already configured (skipped)"
+fi
+
+# 2. Kernel Parameters Optimization
+status "Optimizing kernel parameters for aggressive swap..."
+
+if [ ! -f /etc/sysctl.d/99-kuzco.conf ]; then
+    cat <<EOF > /etc/sysctl.d/99-kuzco.conf
+# Network
+net.core.somaxconn=8192
+net.ipv4.tcp_max_syn_backlog=8192
+net.ipv4.ip_local_port_range=1024 65535
+
+# Memory - AGGRESSIVE SWAP SETTINGS
+vm.swappiness=70               # Start swapping at 70% RAM usage
+vm.vfs_cache_pressure=50       # Keep more filesystem cache in RAM
+vm.dirty_ratio=60             # Maximum % dirty pages before forcing write
+vm.dirty_background_ratio=2    # Percentage when background flush starts
+
+# File handles
+fs.file-max=1048576
+fs.nr_open=1048576
+
+# IPC (Important for DHT)
+kernel.msgmax=65536
+kernel.msgmnb=65536
+kernel.shmall=4294967296
+kernel.shmmax=17179869184
+
+# Process handling
+kernel.pid_max=4194304
+kernel.threads-max=4194304
+vm.max_map_count=262144
+EOF
+    sysctl -p /etc/sysctl.d/99-kuzco.conf >/dev/null 2>&1
+    success "Kernel parameters optimized for aggressive swap"
+else
+    warning "Kernel config already exists. Manual edit required:"
+    echo -e "Edit ${YELLOW}/etc/sysctl.d/99-kuzco.conf${NC} and set:"
+    echo -e "vm.swappiness=70\nvm.vfs_cache_pressure=50"
+fi
+
+# 3. Disable Unnecessary Services
+status "Disabling unnecessary services..."
+
+for service in "${SERVICES_TO_DISABLE[@]}"; do
+    if systemctl is-enabled "$service" 2>/dev/null | grep -q "enabled"; then
+        systemctl disable --now "$service" >/dev/null 2>&1 && \
+            success "Disabled $service" || \
+            warning "Failed to disable $service"
+    else
+        success "$service already disabled (skipped)"
     fi
-    
-    # CGroup memory protection
-    if [ -d /sys/fs/cgroup/memory ]; then
-        echo "memory.limit_in_bytes=20G" > /sys/fs/cgroup/memory/memory.limit_in_bytes
-        success "CGroup memory protection configured"
+done
+
+# 4. Swap File Configuration (Add if missing)
+status "Checking swap configuration..."
+
+CURRENT_SWAP=$(free -m | awk '/Swap/{print $2}')
+RAM_SIZE=$(free -m | awk '/Mem/{print $2}')
+RECOMMENDED_SWAP=$((RAM_SIZE * 30 / 100))  # 30% of RAM
+
+if [ "$CURRENT_SWAP" -lt "$RECOMMENDED_SWAP" ]; then
+    status "Current swap: ${CURRENT_SWAP}MB | Recommended: ${RECOMMENDED_SWAP}MB"
+    read -p "Create additional swapfile? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        SWAPFILE="/swapfile_${RECOMMENDED_SWAP}MB"
+        fallocate -l "${RECOMMENDED_SWAP}M" "$SWAPFILE"
+        chmod 600 "$SWAPFILE"
+        mkswap "$SWAPFILE"
+        swapon "$SWAPFILE"
+        echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
+        success "Created ${RECOMMENDED_SWAP}MB swapfile at $SWAPFILE"
     fi
-}
+else
+    success "Swap size adequate (${CURRENT_SWAP}MB)"
+fi
 
-# ==================== MAIN EXECUTION ====================
-main() {
-    [[ $(id -u) -ne 0 ]] && error "Harus run sebagai root"
-    
-    optimize_memory
-    optimize_highmem
-    
-    # Verifikasi akhir
-    status "Memory Configuration Summary:"
-    echo -e "${GREEN}Physical RAM: $(free -h | awk '/Mem/{print $2}')${NC}"
-    echo -e "${GREEN}Total Swap: $(free -h | awk '/Swap/{print $2}')${NC}"
-    echo -e "${GREEN}Swappiness: $(cat /proc/sys/vm/swappiness)${NC}"
-    echo -e "${GREEN}Overcommit: $(cat /proc/sys/vm/overcommit_memory) (ratio: $(cat /proc/sys/vm/overcommit_ratio))${NC}"
-    
-    echo -e "\n${YELLOW}⚠ PERINGATAN UNTUK KASUS 12GB/20GB:${NC}"
-    echo "1. Sistem akan menggunakan swap secara ekstensif"
-    echo "2. Monitor memory pressure dengan: ${GREEN}vmstat 1${NC}"
-    echo "3. Pertimbangkan upgrade RAM jika sering terjadi OOM"
-    
-    echo -e "\n${GREEN}✔ OPTIMASI SELESAI!${NC}"
-    echo -e "Reboot system: ${GREEN}reboot now${NC}"
-}
+# 5. Final System Updates
+status "Performing final updates..."
 
-main "$@"
+if command -v apt-get >/dev/null; then
+    apt-get update >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get -y upgrade >/dev/null 2>&1 || warning "Update failed"
+    apt-get -y autoremove >/dev/null 2>&1
+    apt-get clean >/dev/null 2>&1
+elif command -v yum >/dev/null; then
+    yum -y update >/dev/null 2>&1 || warning "Update failed"
+    yum -y autoremove >/dev/null 2>&1
+    yum clean all >/dev/null 2>&1
+elif command -v dnf >/dev/null; then
+    dnf -y update >/dev/null 2>&1 || warning "Update failed"
+    dnf -y autoremove >/dev/null 2>&1
+    dnf clean all >/dev/null 2>&1
+fi
+
+# 6. Apply All Changes
+status "Applying all changes..."
+systemctl daemon-reload >/dev/null 2>&1 && \
+    success "Systemd daemon reloaded" || \
+    warning "Failed to reload systemd daemon"
+
+# Verification
+status "Current settings verification:"
+echo -e "${BLUE}Memory/Swap:${NC}"
+free -h
+echo -e "\n${BLUE}Swapiness:${NC}"
+cat /proc/sys/vm/swappiness
+echo -e "\n${BLUE}Cache Pressure:${NC}"
+cat /proc/sys/vm/vfs_cache_pressure
+
+# Final message
+echo -e "\n${GREEN}✔ Optimization complete!${NC}"
+echo -e "${YELLOW}Some changes require a reboot to take full effect.${NC}"
+echo -e "Run: ${GREEN}reboot${NC} then verify with:"
+echo -e "1. Check swap usage: ${GREEN}free -h${NC}"
+echo -e "2. Check current settings: ${GREEN}cat /proc/sys/vm/{swappiness,vfs_cache_pressure}${NC}"
