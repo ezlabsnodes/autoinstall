@@ -111,17 +111,31 @@ else
     info "npm installed: $(npm --version)"
 fi
 
-# Install Yarn if not present
+# ==========================================
+# Yarn Installation
+# ==========================================
 if ! command_exists yarn; then
-    info "Installing Yarn..."
-    if ! sudo npm install -g yarn; then
-        warn "Failed to install Yarn"
+    # Detect Ubuntu (including WSL Ubuntu) and install Yarn accordingly
+    if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
+        info "Detected Ubuntu or WSL Ubuntu. Installing Yarn via apt..."
+        curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
+        echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
+        sudo apt update && sudo apt install -y yarn
+    else
+        info "Yarn not found. Installing Yarn globally with npm..."
+        npm install -g --silent yarn
+    fi
+    
+    # Verify installation
+    if ! command_exists yarn; then
+        warn "Yarn installation might have failed"
     else
         info "Yarn installed: $(yarn --version)"
     fi
 else
     info "Yarn already installed: $(yarn --version)"
 fi
+
 # ==========================================
 # Final Checks
 # ==========================================
