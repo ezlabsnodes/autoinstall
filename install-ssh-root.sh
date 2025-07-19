@@ -76,7 +76,4 @@ echo "1. SSH Key Email: $DEFAULT_EMAIL"
 echo "2. VPS IP: $vps_ip"
 echo "3. SSH Port: $SSH_PORT"
 
-echo -e "\nConnection command:"
-echo "ssh -i ~/.ssh/id_rsa $REMOTE_USER@$vps_ip -p $SSH_PORT"
-
 echo -e "\nWARNING: Keep your private key secure and don't share it with anyone!"
