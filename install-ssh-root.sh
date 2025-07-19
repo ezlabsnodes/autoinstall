@@ -73,7 +73,7 @@ echo "----------------------------------------"
 
 echo -e "\nAuto-configured values:"
 echo "1. SSH Key Email: $DEFAULT_EMAIL"
-echo "2. Auto-copied key to: $REMOTE_USER@$vps_ip"
+echo "2. VPS IP: $vps_ip"
 echo "3. SSH Port: $SSH_PORT"
 
 echo -e "\nConnection command:"
