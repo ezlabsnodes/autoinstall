@@ -9,7 +9,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 #install nano
-sudo apt install nano
+sudo apt update && sudo apt install nano -y
 
 # Get current username
 current_user=$(who am i | awk '{print $1}')
