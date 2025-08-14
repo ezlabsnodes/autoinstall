@@ -7,7 +7,7 @@ set -e
 echo "🚀 Memulai skrip instalasi lingkungan pengembangan..."
 echo "----------------------------------------------------"
 
-# 1. Instalasi dependensi sistem yang diperlukan
+# 1. Instalasi dependensi
 echo "STEP 1: Menginstal dependensi sistem (memerlukan password sudo)..."
 sudo apt update
 sudo apt install -y build-essential \
@@ -58,7 +58,4 @@ echo "Verifikasi Versi:"
 echo "   - Node: $(node -v)"
 echo "   - NPM:  $(npm -v)"
 echo ""
-echo "📌 PENTING: Untuk menggunakan 'nvm', 'node', dan 'phase2cli' di terminal Anda,"
-echo "   Anda perlu me-restart terminal atau menjalankan perintah berikut:"
-echo "   source ~/.bashrc"
 echo "----------------------------------------------------"
