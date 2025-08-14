@@ -41,7 +41,7 @@ echo ""
 
 # 4. Instalasi dan Otentikasi P0tion Phase2 CLI
 echo "STEP 4: Menginstal dan menjalankan otentikasi Phase2 CLI..."
-npm install -g @p0tion/phase2cli
+npm install -g @p0tion/phase2cli@latest
 echo "✅ @p0tion/phase2cli berhasil diinstal secara global."
 echo ""
 echo "Sekarang menjalankan proses otentikasi..."
