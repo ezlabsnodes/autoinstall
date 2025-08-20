@@ -1,15 +1,9 @@
 #!/bin/bash
-set -euo pipefail  # More strict error handling
+set -euo pipefail
 
-# ==========================================
-# Configuration Variables
-# ==========================================
-USERNAME=$(whoami)  # Get current username
-ARCH=$(uname -m)    # System architecture
+USERNAME=$(whoami)
+ARCH=$(uname -m)
 
-# ==========================================
-# Utility Functions
-# ==========================================
 function info() {
     echo -e "\033[1;32m[INFO] $1\033[0m"
 }
@@ -34,29 +28,19 @@ function command_exists() {
     command -v "$1" &> /dev/null
 }
 
-# ==========================================
-# System Checks
-# ==========================================
 info "Checking system architecture..."
 if [ "$ARCH" != "x86_64" ]; then
     warn "Non-x86_64 architecture detected ($ARCH), some packages might need adjustment"
 fi
 
-# Check for sudo privileges
 if ! sudo -v; then
     error "This script requires sudo privileges"
 fi
 
-# ==========================================
-# System Update
-# ==========================================
 info "Updating system packages..."
 sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get autoremove -y
 
-# ==========================================
-# Install Essential Packages
-# ==========================================
 info "Installing essential build tools..."
 install_packages \
     git clang cmake build-essential openssl pkg-config libssl-dev \
@@ -67,9 +51,6 @@ install_packages \
     nano automake autoconf nvme-cli libgbm-dev libleveldb-dev bsdmainutils unzip \
     ca-certificates curl gnupg lsb-release software-properties-common
 
-# ==========================================
-# Node.js Installation (Latest LTS Version)
-# ==========================================
 info "Checking Node.js installation..."
 
 if command_exists node; then
@@ -78,7 +59,6 @@ if command_exists node; then
     info "Node.js already installed: $CURRENT_NODE"
     info "npm already installed: $CURRENT_NPM"
     
-    # Check for updates
     info "Checking for Node.js updates..."
     LATEST_NODE_VERSION=$(curl -fsSL https://nodejs.org/dist/latest-v18.x/SHASUMS256.txt | grep -oP 'node-v\K\d+\.\d+\.\d+-linux-x64' | head -1 | cut -d'-' -f1)
     if [ "$(node --version | cut -d'v' -f2)" != "$LATEST_NODE_VERSION" ]; then
@@ -88,7 +68,6 @@ if command_exists node; then
         info "  sudo n lts"
     fi
 else
-    # Install NodeSource setup script with proper error handling
     info "Adding NodeSource repository..."
     if ! curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -; then
         error "Failed to set up NodeSource repository"
@@ -96,12 +75,10 @@ else
     
     install_packages nodejs
 
-    # Verify installation
     if ! command_exists node; then
         error "Node.js installation failed"
     fi
     
-    # Update npm to latest version
     info "Updating npm to latest version..."
     if ! sudo npm install -g npm@latest; then
         warn "Failed to update npm to latest version"
@@ -111,11 +88,7 @@ else
     info "npm installed: $(npm --version)"
 fi
 
-# ==========================================
-# Yarn Installation
-# ==========================================
 if ! command_exists yarn; then
-    # Detect Ubuntu (including WSL Ubuntu) and install Yarn accordingly
     if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
         info "Detected Ubuntu or WSL Ubuntu. Installing Yarn via apt..."
         curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
@@ -126,7 +99,6 @@ if ! command_exists yarn; then
         npm install -g --silent yarn
     fi
     
-    # Verify installation
     if ! command_exists yarn; then
         warn "Yarn installation might have failed"
     else
@@ -136,12 +108,8 @@ else
     info "Yarn already installed: $(yarn --version)"
 fi
 
-# ==========================================
-# Final Checks
-# ==========================================
 info "Verifying installations..."
 
-# List installed versions
 info "=== Installed Versions ==="
 info "Node.js: $(node --version 2>/dev/null || echo 'Not installed')"
 info "npm: $(npm --version 2>/dev/null || echo 'Not installed')"
