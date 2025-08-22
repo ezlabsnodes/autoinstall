@@ -1,46 +1,49 @@
-#!/bin/bash
-set -e
-
-# ==============================================
-# 1. FIRST DEFINE ALL FUNCTIONS AND VARIABLES
-# ==============================================
-
-# Color codes
+#!/usr/bin/env bash
+set -euo pipefail
+# -----------------------------
+# Color helpers
+# -----------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Status functions
+NC='\033[0m'
 status() { echo -e "\n${BLUE}>>> $*${NC}"; }
 success() { echo -e "${GREEN}✓ $*${NC}"; }
 warning() { echo -e "${YELLOW}⚠ $*${NC}"; }
 error() { echo -e "${RED}✗ $*${NC}"; exit 1; }
 
-# System services to disable
-SERVICES_TO_DISABLE=(
-    avahi-daemon
-    cups
-    bluetooth
-    ModemManager
-)
+# -----------------------------
+# Configurable
+# -----------------------------
+# Set SWAP_SIZE_GB via environment to skip prompt, e.g.:
+#   sudo SWAP_SIZE_GB=32 bash kuzco-swap-heavy-and-ram-cap.sh
+SERVICES_TO_DISABLE=(avahi-daemon cups bluetooth ModemManager)
 
-# ==============================================
-# 2. MAIN SCRIPT LOGIC - OPTIMIZED FOR AGGRESSIVE SWAP
-# ==============================================
+# -----------------------------
+# Pre-checks
+# -----------------------------
+[ "$(id -u)" -eq 0 ] || error "Run as root (sudo)."
 
-# Check root
-if [ "$(id -u)" -ne 0 ]; then
-    error "Script must be run as root. Use sudo or switch to root user."
+# Detect systemd + cgroup mode
+if ! pidof systemd >/dev/null 2>&1; then
+  warning "System does not appear to be using systemd. RAM cap parts will be skipped."
 fi
 
-# 1. System Limits Optimization
-status "Optimizing system limits..."
+CGROUP_V2=0
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  CGROUP_V2=1
+  success "cgroup v2 detected."
+else
+  warning "cgroup v2 not detected. RAM cap will be best-effort only. Consider enabling unified cgroup hierarchy."
+fi
 
-# Configure system-wide limits
-if ! grep -q "# Kuzco Optimization" /etc/security/limits.conf; then
-    cat <<EOF >> /etc/security/limits.conf
+# -----------------------------
+# 1) System limits (nofile/nproc/memlock)
+# -----------------------------
+status "Optimizing system limits..."
+if ! grep -q "# Kuzco Optimization" /etc/security/limits.conf 2>/dev/null; then
+  cat <<'EOF' >> /etc/security/limits.conf
 
 # Kuzco Optimization
 * soft nofile 1048576
@@ -56,18 +59,15 @@ root hard nproc unlimited
 root soft memlock unlimited
 root hard memlock unlimited
 EOF
-    success "Added limits to /etc/security/limits.conf"
+  success "Added limits to /etc/security/limits.conf"
 else
-    success "System limits already configured (skipped)"
+  success "System limits already configured (skipped)"
 fi
 
-# Apply immediate session limits
-ulimit -n 1048576 >/dev/null 2>&1 || warning "Couldn't increase current session limits (reboot required)"
-success "Attempted to set immediate file descriptor limit"
+ulimit -n 1048576 >/dev/null 2>&1 || warning "Couldn't increase current session limits (reboot may be required)."
 
-# Configure systemd limits
 mkdir -p /etc/systemd/system.conf.d/
-cat <<EOF > /etc/systemd/system.conf.d/limits.conf
+cat <<'EOF' > /etc/systemd/system.conf.d/limits.conf
 [Manager]
 DefaultLimitNOFILE=1048576
 DefaultLimitNPROC=infinity
@@ -75,189 +75,233 @@ DefaultLimitMEMLOCK=infinity
 EOF
 success "Configured systemd limits"
 
-# Configure pam limits
 if [ -f /etc/pam.d/common-session ] && ! grep -q "pam_limits.so" /etc/pam.d/common-session; then
-    echo "session required pam_limits.so" >> /etc/pam.d/common-session
-    success "Added PAM limits configuration"
-elif [ ! -f /etc/pam.d/common-session ]; then
-    warning "PAM common-session file not found"
+  echo "session required pam_limits.so" >> /etc/pam.d/common-session
+  success "Added PAM limits configuration"
 else
-    success "PAM limits already configured (skipped)"
+  success "PAM limits already configured or not applicable (skipped)"
 fi
 
-# 2. Kernel Parameters Optimization - REVISED FOR BETTER SWAP USAGE
-status "Optimizing kernel parameters for aggressive swap..."
-
+# -----------------------------
+# 2) sysctl: Swap heavy behavior
+# -----------------------------
+status "Optimizing kernel parameters for swap-heavy behavior..."
 if [ ! -f /etc/sysctl.d/99-kuzco.conf ]; then
-    cat <<EOF > /etc/sysctl.d/99-kuzco.conf
-# Network
+  cat <<'EOF' > /etc/sysctl.d/99-kuzco.conf
+# --------------- Network (safe defaults)
 net.core.somaxconn=8192
 net.ipv4.tcp_max_syn_backlog=8192
 net.ipv4.ip_local_port_range=1024 65535
 
-# Memory - REVISED AGGRESSIVE SWAP SETTINGS
-vm.swappiness=100              # More aggressive swapping (default 60)
-vm.vfs_cache_pressure=50       # Keep more filesystem cache in RAM
-vm.dirty_ratio=10              # Lower value to flush dirty pages earlier
-vm.dirty_background_ratio=5    # More frequent background flushes
-vm.overcommit_memory=1         # Allow memory overcommit
-vm.overcommit_ratio=80         # Overcommit up to 80% of swap+RAM
-vm.page-cluster=0              # Swap pages individually for better performance
-vm.watermark_scale_factor=200  # More aggressive memory reclaim
+# --------------- Memory — Aggressive swap + stable caches
+vm.swappiness=100               # Prefer swapping sooner (0..100)
+vm.vfs_cache_pressure=50        # Keep inode/dentry cache longer
+vm.dirty_ratio=10               # Flush earlier
+vm.dirty_background_ratio=5
+vm.overcommit_memory=1          # Permit overcommit
+vm.overcommit_ratio=80          # Allow 80% of RAM+swap
+vm.page-cluster=0               # Swap page-at-a-time (lower latency)
+vm.watermark_scale_factor=200   # More aggressive reclaim when low
 
-# File handles
+# --------------- File handles
 fs.file-max=1048576
 fs.nr_open=1048576
 
-# IPC (Important for DHT)
+# --------------- IPC (optional, leave as-is if unsure)
 kernel.msgmax=65536
 kernel.msgmnb=65536
 kernel.shmall=4294967296
 kernel.shmmax=17179869184
 
-# Process handling
+# --------------- Process / VM maps
 kernel.pid_max=4194304
 kernel.threads-max=4194304
 vm.max_map_count=262144
 EOF
-    sysctl -p /etc/sysctl.d/99-kuzco.conf >/dev/null 2>&1
-    success "Kernel parameters optimized for aggressive swap"
+  sysctl -p /etc/sysctl.d/99-kuzco.conf >/dev/null 2>&1 || warning "sysctl apply returned non-zero (check values)."
+  success "Kernel parameters applied"
 else
-    warning "Kernel config already exists. Manual edit required:"
-    echo -e "Edit ${YELLOW}/etc/sysctl.d/99-kuzco.conf${NC} and set:"
-    echo -e "vm.swappiness=100\nvm.overcommit_memory=1\nvm.overcommit_ratio=80"
+  warning "Existing /etc/sysctl.d/99-kuzco.conf found. Review that vm.swappiness=100 and related settings are present."
 fi
 
-# 3. Disable Unnecessary Services
+# -----------------------------
+# 3) Disable non-essential services
+# -----------------------------
 status "Disabling unnecessary services..."
-
-for service in "${SERVICES_TO_DISABLE[@]}"; do
-    if systemctl is-enabled "$service" 2>/dev/null | grep -q "enabled"; then
-        systemctl disable --now "$service" >/dev/null 2>&1 && \
-            success "Disabled $service" || \
-            warning "Failed to disable $service"
-    else
-        success "$service already disabled (skipped)"
-    fi
+for svc in "${SERVICES_TO_DISABLE[@]}"; do
+  if systemctl is-enabled "$svc" 2>/dev/null | grep -q enabled; then
+    systemctl disable --now "$svc" >/dev/null 2>&1 && success "Disabled $svc" || warning "Failed to disable $svc"
+  else
+    success "$svc already disabled (skipped)"
+  fi
 done
 
-# 4. Swap File Configuration (Improved Implementation)
+# -----------------------------
+# 4) Swap: ensure large swapfile + zswap
+# -----------------------------
 status "Checking swap configuration..."
+CURRENT_SWAP_MB=$(free -m | awk '/Swap/ {print $2}')
+RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
+RECOMMENDED_SWAP_MB=$((RAM_MB * 2))
 
-CURRENT_SWAP=$(free -m | awk '/Swap/{print $2}')
-RAM_SIZE=$(free -m | awk '/Mem/{print $2}')
-RECOMMENDED_SWAP=$((RAM_SIZE * 2))  # 2x RAM (200%)
+# Read desired swap size
+if [ -z "${SWAP_SIZE_GB:-}" ]; then
+  if [ "$CURRENT_SWAP_MB" -lt "$RECOMMENDED_SWAP_MB" ]; then
+    echo -n "Enter swap size in GB (default: $((RECOMMENDED_SWAP_MB/1024))): "
+    read -r SWAP_SIZE_GB || true
+  else
+    SWAP_SIZE_GB=$((CURRENT_SWAP_MB/1024))
+  fi
+fi
 
-if [ "$CURRENT_SWAP" -lt "$RECOMMENDED_SWAP" ]; then
-    status "Current swap: ${CURRENT_SWAP}MB | Recommended (2x RAM): ${RECOMMENDED_SWAP}MB"
-    read -p "Enter swap size in GB (e.g. 30 for 30GB) or press Enter for recommended size (2x RAM): " SWAP_SIZE_GB
-    
-    if [[ -n "$SWAP_SIZE_GB" && "$SWAP_SIZE_GB" =~ ^[0-9]+$ ]]; then
-        # User entered a number - use that for GB
-        SWAP_SIZE_MB=$((SWAP_SIZE_GB * 1024))
-        status "Creating ${SWAP_SIZE_GB}GB swapfile as requested..."
-    else
-        # Use recommended size (2x RAM)
-        SWAP_SIZE_MB=$RECOMMENDED_SWAP
-        SWAP_SIZE_GB=$((SWAP_SIZE_MB / 1024))
-        status "Creating recommended ${SWAP_SIZE_GB}GB (2x RAM) swapfile..."
-    fi
-    
-    # Check if swapfile already exists
-    if [ -f "/swapfile_${SWAP_SIZE_GB}GB" ]; then
-        warning "Swapfile already exists, removing old version..."
-        swapoff "/swapfile_${SWAP_SIZE_GB}GB" 2>/dev/null || true
-        rm -f "/swapfile_${SWAP_SIZE_GB}GB"
-    fi
-    
-    # Create new swapfile with improved settings
-    SWAPFILE="/swapfile_${SWAP_SIZE_GB}GB"
-    status "Creating swapfile with optimal settings..."
-    
-    # Use dd instead of fallocate for better compatibility
-    dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SWAP_SIZE_MB" status=progress
-    chmod 600 "$SWAPFILE"
-    mkswap -f "$SWAPFILE"
-    swapon --discard "$SWAPFILE"  # Enable discard for SSDs
-    
-    # Add to fstab with optimal parameters
-    if ! grep -q "$SWAPFILE" /etc/fstab; then
-        echo "$SWAPFILE none swap sw,discard=once,pri=100 0 0" >> /etc/fstab
-    else
-        sed -i "s|^$SWAPFILE.*|$SWAPFILE none swap sw,discard=once,pri=100 0 0|" /etc/fstab
-    fi
-    
-    # Enable zswap for better performance
-    if [ -d /sys/module/zswap ]; then
-        echo 1 > /sys/module/zswap/parameters/enabled
-        echo zstd > /sys/module/zswap/parameters/compressor
-        echo 20 > /sys/module/zswap/parameters/max_pool_percent
-    fi
-    
-    success "Created optimized ${SWAP_SIZE_GB}GB swapfile at $SWAPFILE"
+# Fallback to recommended if empty or non-numeric
+if ! [[ "${SWAP_SIZE_GB:-}" =~ ^[0-9]+$ ]]; then
+  SWAP_SIZE_GB=$((RECOMMENDED_SWAP_MB/1024))
+fi
+SWAP_SIZE_MB=$((SWAP_SIZE_GB * 1024))
+SWAPFILE="/swapfile_${SWAP_SIZE_GB}GB"
+
+if [ "$CURRENT_SWAP_MB" -lt "$SWAP_SIZE_MB" ]; then
+  status "Creating ${SWAP_SIZE_GB}GB swapfile at ${SWAPFILE}..."
+  [ -f "$SWAPFILE" ] && (swapoff "$SWAPFILE" 2>/dev/null || true; rm -f "$SWAPFILE")
+  dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SWAP_SIZE_MB" status=progress
+  chmod 600 "$SWAPFILE"
+  mkswap -f "$SWAPFILE"
+  swapon --discard "$SWAPFILE"
+  if ! grep -q "^$SWAPFILE" /etc/fstab; then
+    echo "$SWAPFILE none swap sw,discard=once,pri=100 0 0" >> /etc/fstab
+  else
+    sed -i "s|^$SWAPFILE.*|$SWAPFILE none swap sw,discard=once,pri=100 0 0|" /etc/fstab
+  fi
+  success "Swapfile created and enabled"
 else
-    success "Swap size adequate (${CURRENT_SWAP}MB)"
-    
-    # Enable zswap even if swap is adequate
-    if [ -d /sys/module/zswap ]; then
-        echo 1 > /sys/module/zswap/parameters/enabled
-        echo zstd > /sys/module/zswap/parameters/compressor
-        echo 20 > /sys/module/zswap/parameters/max_pool_percent
-        success "Enabled zswap compression for existing swap"
-    fi
+  success "Existing swap (${CURRENT_SWAP_MB}MB) >= desired (${SWAP_SIZE_MB}MB) — keeping."
 fi
 
-# 5. Final System Updates
-status "Performing final updates..."
-
-if command -v apt-get >/dev/null; then
-    apt-get update >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get -y upgrade >/dev/null 2>&1 || warning "Update failed"
-    apt-get -y autoremove >/dev/null 2>&1
-    apt-get clean >/dev/null 2>&1
-elif command -v yum >/dev/null; then
-    yum -y update >/dev/null 2>&1 || warning "Update failed"
-    yum -y autoremove >/dev/null 2>&1
-    yum clean all >/dev/null 2>&1
-elif command -v dnf >/dev/null; then
-    dnf -y update >/dev/null 2>&1 || warning "Update failed"
-    dnf -y autoremove >/dev/null 2>&1
-    dnf clean all >/dev/null 2>&1
-fi
-
-# 6. Apply All Changes and Verify
-status "Applying all changes and verifying settings..."
-systemctl daemon-reload >/dev/null 2>&1 && \
-    success "Systemd daemon reloaded" || \
-    warning "Failed to reload systemd daemon"
-
-# Clear caches to encourage swap usage
-sync && echo 3 > /proc/sys/vm/drop_caches
-
-# Verification
-status "Current settings verification:"
-echo -e "${BLUE}Memory/Swap:${NC}"
-free -h
-echo -e "\n${BLUE}Swap Settings:${NC}"
-swapon --show
-echo -e "\n${BLUE}Kernel Parameters:${NC}"
-echo "swappiness: $(cat /proc/sys/vm/swappiness)"
-echo "vfs_cache_pressure: $(cat /proc/sys/vm/vfs_cache_pressure)"
-echo "overcommit_memory: $(cat /proc/sys/vm/overcommit_memory)"
-echo "overcommit_ratio: $(cat /proc/sys/vm/overcommit_ratio)"
-echo -e "\n${BLUE}Zswap Status:${NC}"
+# zswap (compressed in-RAM swap cache)
 if [ -d /sys/module/zswap ]; then
-    echo "enabled: $(cat /sys/module/zswap/parameters/enabled)"
-    echo "compressor: $(cat /sys/module/zswap/parameters/compressor)"
-    echo "max_pool_percent: $(cat /sys/module/zswap/parameters/max_pool_percent)"
+  status "Configuring zswap..."
+  # Use safe values; kernel expects Y/N for enabled
+  echo Y > /sys/module/zswap/parameters/enabled || warning "Failed to enable zswap (kernel policy)"
+  echo zstd > /sys/module/zswap/parameters/compressor || true
+  echo 20 > /sys/module/zswap/parameters/max_pool_percent || true
+  success "zswap configured (if supported)"
 else
-    echo "Zswap not available in this kernel"
+  warning "zswap module/feature not present on this kernel"
 fi
 
-# Final message
+# Optionally, encourage immediate rebalancing towards swap
+status "Rebalancing page cache / swap..."
+sync || true
+# Drop page cache to free RAM for anon, encouraging swap usage under pressure
+echo 3 > /proc/sys/vm/drop_caches || true
+# Cycle swap to migrate cold anon pages
+swapoff -a || true
+swapon -a || true
+success "Cache dropped and swap cycled"
+
+# -----------------------------
+# 5) Global RAM cap (reserve 2GB for the system)
+# -----------------------------
+status "Configuring a global-ish RAM cap (reserve 2GB)..."
+MEMTOTAL_KB=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
+RESERVE_KB=$((2 * 1024 * 1024)) # 2GB
+if [ "$MEMTOTAL_KB" -le "$RESERVE_KB" ]; then
+  warning "Total RAM <= 2GB; skipping RAM cap."
+else
+  LIMIT_KB=$((MEMTOTAL_KB - RESERVE_KB))
+  LIMIT_MB=$((LIMIT_KB / 1024))
+  LIMIT_STR="${LIMIT_MB}M"
+
+  mkdir -p /etc/systemd/system.conf.d
+  # Make sure memory accounting is on globally
+  cat <<'EOF' > /etc/systemd/system.conf.d/memory-accounting.conf
+[Manager]
+DefaultMemoryAccounting=yes
+EOF
+
+  if [ "$CGROUP_V2" -eq 1 ]; then
+    # Apply to user.slice and system.slice so *most* apps are constrained
+    mkdir -p /etc/systemd/system/user.slice.d /etc/systemd/system/system.slice.d
+    cat > /etc/systemd/system/user.slice.d/memory.conf <<EOF
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=${LIMIT_STR}
+MemoryMax=${LIMIT_STR}
+MemorySwapMax=infinity
+EOF
+    cat > /etc/systemd/system/system.slice.d/memory.conf <<EOF
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=${LIMIT_STR}
+MemoryMax=${LIMIT_STR}
+MemorySwapMax=infinity
+EOF
+    success "Applied MemoryHigh/MemoryMax=${LIMIT_STR} to user.slice & system.slice"
+    warning "Note: These are per-slice limits; combined usage can exceed ${LIMIT_STR}. True global cap on the root slice is not supported via systemd."
+  else
+    warning "cgroup v2 not active — cannot enforce MemoryMax cleanly. Consider enabling unified cgroups to honor the cap."
+  fi
+fi
+
+# -----------------------------
+# 6) Update packages (quiet)
+# -----------------------------
+status "Performing final updates..."
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get -y upgrade >/dev/null 2>&1 || warning "apt upgrade failed"
+  apt-get -y autoremove >/dev/null 2>&1 || true
+  apt-get clean >/dev/null 2>&1 || true
+elif command -v dnf >/dev/null 2>&1; then
+  dnf -y update >/dev/null 2>&1 || warning "dnf update failed"
+  dnf -y autoremove >/dev/null 2>&1 || true
+  dnf clean all >/dev/null 2>&1 || true
+elif command -v yum >/dev/null 2>&1; then
+  yum -y update >/dev/null 2>&1 || warning "yum update failed"
+  yum -y autoremove >/dev/null 2>&1 || true
+  yum clean all >/dev/null 2>&1 || true
+fi
+
+# -----------------------------
+# 7) Apply & verify
+# -----------------------------
+status "Applying changes & verifying..."
+systemctl daemon-reload >/dev/null 2>&1 && success "systemd daemon reloaded" || warning "Failed to reload systemd daemon"
+
+status "Current memory & swap:"; free -h || true
+
+status "Swap devices:"; swapon --show || true
+
+status "Kernel VM params (live):"
+for p in swappiness vfs_cache_pressure overcommit_memory overcommit_ratio; do
+  echo "$p: $(cat /proc/sys/vm/$p 2>/dev/null || echo n/a)"
+done
+
+status "zswap status:"
+if [ -d /sys/module/zswap ]; then
+  echo "enabled: $(cat /sys/module/zswap/parameters/enabled 2>/dev/null || echo n/a)"
+  echo "compressor: $(cat /sys/module/zswap/parameters/compressor 2>/dev/null || echo n/a)"
+  echo "max_pool_percent: $(cat /sys/module/zswap/parameters/max_pool_percent 2>/dev/null || echo n/a)"
+else
+  echo "zswap not available"
+fi
+
+if [ "$CGROUP_V2" -eq 1 ]; then
+  status "Slice limits (live):"
+  systemctl show -p MemoryCurrent -p MemoryHigh -p MemoryMax user.slice system.slice 2>/dev/null || true
+  echo "\nPaths:"
+  echo "user.slice:   /sys/fs/cgroup/user.slice/memory.{current,high,max}"
+  echo "system.slice: /sys/fs/cgroup/system.slice/memory.{current,high,max}"
+fi
+
+# -----------------------------
+# Done
+# -----------------------------
 echo -e "\n${GREEN}✔ Optimization complete!${NC}"
-echo -e "${YELLOW}Some changes require a reboot to take full effect.${NC}"
-echo -e "Run: ${GREEN}reboot${NC} then verify with:"
-echo -e "1. Check swap usage: ${GREEN}free -h${NC}"
-echo -e "2. Check current settings: ${GREEN}cat /proc/sys/vm/{swappiness,vfs_cache_pressure}${NC}"
-echo -e "3. Monitor swap activity: ${GREEN}vmstat 1${NC} or ${GREEN}cat /proc/vmstat | grep swap${NC}"
+echo -e "${YELLOW}Reboot recommended${NC} to fully apply all limits (especially slice MemoryMax)."
+echo -e "After reboot, verify:"
+echo -e "  * free -h"
+echo -e "  * cat /sys/fs/cgroup/user.slice/memory.{current,high,max}"
+echo -e "  * cat /sys/fs/cgroup/system.slice/memory.{current,high,max}"
+echo -e "  * vmstat 1 (watch swap activity)"
