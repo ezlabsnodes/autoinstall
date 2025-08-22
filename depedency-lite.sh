@@ -63,7 +63,7 @@ install_packages \
     git clang cmake build-essential openssl pkg-config libssl-dev \
     wget htop tmux jq make gcc tar ncdu protobuf-compiler \
     default-jdk aptitude squid apache2-utils file lsof zip unzip \
-    iptables iptables-persistent openssh-server sed lz4 aria2 pv \
+    openssh-server sed lz4 aria2 pv \
     python3 python3-venv python3-pip python3-dev screen snapd flatpak \
     nano automake autoconf nvme-cli libgbm-dev libleveldb-dev bsdmainutils unzip \
     ca-certificates curl gnupg lsb-release software-properties-common
