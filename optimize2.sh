@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# ================================================================
-# Swap-Heavy Tuning + RAM Cap with optional early-swap (Option 3)
-# Default target slice: rl-swarm.slice  (you can switch to user/system slices)
-# ================================================================
-
 # -----------------------------
 # Color helpers
 # -----------------------------
