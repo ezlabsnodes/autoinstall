@@ -142,7 +142,7 @@ done
 status "Checking swap configuration..."
 CURRENT_SWAP_MB=$(free -m | awk '/Swap/ {print $2}')
 RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
-RECOMMENDED_SWAP_MB=$((RAM_MB * 2))
+RECOMMENDED_SWAP_MB=$((RAM_MB * 8))
 
 # Read desired swap size
 if [ -z "${SWAP_SIZE_GB:-}" ]; then
