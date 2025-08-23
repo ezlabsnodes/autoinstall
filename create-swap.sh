@@ -56,7 +56,7 @@ if (( TOTAL_RAM_GB < 1 )); then
     warning "Total RAM sangat kecil (${TOTAL_RAM_GB}GB), menggunakan swapfile minimum 2GB."
 else
     # Untuk RAM 1GB atau lebih, gunakan 2x RAM
-    SWAP_SIZE="$((TOTAL_RAM_GB * 2))G"
+    SWAP_SIZE="$((TOTAL_RAM_GB * 6))G"
 fi
 
 
