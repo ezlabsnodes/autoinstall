@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# ================================================================
+# Swap-Heavy Tuning + RAM Cap with optional early-swap (Option 3)
+# Default target slice: rl-swarm.slice  (you can switch to user/system slices)
+# ================================================================
+
 # -----------------------------
 # Color helpers
 # -----------------------------
@@ -199,21 +204,15 @@ done
 status "Checking swap configuration..."
 CURRENT_SWAP_MB=$(free -m | awk '/Swap/ {print $2}')
 RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
-RECOMMENDED_SWAP_MB=$((RAM_MB * 6))   # sesuai skrip user: 6x RAM
 
-# Read desired swap size
+# --- Auto swap size: fixed 100GB (override with --swap-size-gb or SWAP_SIZE_GB)
+DEFAULT_SWAP_GB=100
 if [ -z "${SWAP_SIZE_GB}" ]; then
-  if [ "$CURRENT_SWAP_MB" -lt "$RECOMMENDED_SWAP_MB" ]; then
-    echo -n "Enter swap size in GB (default: $((RECOMMENDED_SWAP_MB/1024))): "
-    read -r SWAP_SIZE_GB || true
-  else
-    SWAP_SIZE_GB=$((CURRENT_SWAP_MB/1024))
-  fi
+  SWAP_SIZE_GB=${DEFAULT_SWAP_GB}
 fi
-
-# Fallback to recommended if empty or non-numeric
-if ! [[ "${SWAP_SIZE_GB:-}" =~ ^[0-9]+$ ]]; then
-  SWAP_SIZE_GB=$((RECOMMENDED_SWAP_MB/1024))
+if ! [[ "${SWAP_SIZE_GB}" =~ ^[0-9]+$ ]]; then
+  warning "Invalid --swap-size-gb value; fallback to ${DEFAULT_SWAP_GB}GB"
+  SWAP_SIZE_GB=${DEFAULT_SWAP_GB}
 fi
 SWAP_SIZE_MB=$((SWAP_SIZE_GB * 1024))
 SWAPFILE="/swapfile_${SWAP_SIZE_GB}GB"
