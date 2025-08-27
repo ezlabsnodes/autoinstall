@@ -61,7 +61,7 @@ info "Installing essential build tools and common utilities..."
 install_packages \
     git clang cmake build-essential openssl pkg-config libssl-dev \
     wget htop tmux jq make gcc tar ncdu protobuf-compiler \
-    default-jdk iptables iptables-persistent openssh-server sed lz4 aria2 pv \
+    default-jdk openssh-server sed lz4 aria2 pv \
     python3 python3-pip python3-dev screen \
     nano automake autoconf unzip \
     ca-certificates curl gnupg lsb-release software-properties-common
@@ -116,3 +116,4 @@ info "Docker Compose (plugin): $(docker compose version 2>/dev/null | head -n 1 
 
 info "Installation completed successfully!"
 info "Please remember to log out and back in (or run 'newgrp docker') for the Docker group changes to take effect for user '$USERNAME'."
+
