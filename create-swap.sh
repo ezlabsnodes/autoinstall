@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail # Menghentikan skrip jika ada perintah yang gagal dan jika variabel tidak diatur
+set -euo pipefail
 
 # ==========================================
 # Fungsi-fungsi utilitas
@@ -20,57 +20,46 @@ function error() {
 # ==========================================
 # 1. Verifikasi Environment
 # ==========================================
-message "Memulai konfigurasi swapfile otomatis (2x RAM)"
+message "Memulai konfigurasi swapfile custom"
 
 # Cek root
 if [[ $EUID -ne 0 ]]; then
     error "Script harus dijalankan sebagai root"
 fi
 
-# Skip if already optimized by optimize_fixed.sh
-if [ -f /etc/sysctl.d/99-kuzco.conf ]; then
-    message "Deteksi sistem sudah dioptimasi oleh optimize_fixed.sh"
-    message "Script ini hanya akan mengatur swapfile saja"
+# ==========================================
+# 2. Input Ukuran Swap Custom
+# ==========================================
+message "Masukkan ukuran swapfile yang diinginkan"
+echo "Contoh format: 4G, 8G, 16G, 4096M, 8192M"
+read -p "Ukuran swapfile: " SWAP_SIZE
+
+# Validasi input
+if [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]]; then
+    error "Format tidak valid. Gunakan format seperti: 4G, 8G, 4096M"
 fi
 
 # ==========================================
-# 2. Konfigurasi Swapfile - Ukuran Otomatis (2x RAM)
+# 3. Konfigurasi Swapfile
 # ==========================================
 SWAPFILE="/swapfile"
 
-# Hitung RAM yang tersedia dalam GB (dibundel ke bawah)
+message "\nInformasi sistem:"
 TOTAL_RAM_GB=$(free -g | awk '/Mem:/ {print $2}')
-# Jika free -g memberikan output 0GB untuk RAM kecil, gunakan MB dan konversi
 if [ "$TOTAL_RAM_GB" -eq 0 ]; then
     TOTAL_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
-    TOTAL_RAM_GB=$(( (TOTAL_RAM_MB + 1023) / 1024 )) # Bulatkan ke atas jika ada MB, konversi ke GB
+    TOTAL_RAM_GB=$(( (TOTAL_RAM_MB + 1023) / 1024 ))
 fi
 
-
-# Ukuran swap yang diinginkan: 2x RAM dalam GB
-SWAP_SIZE="${TOTAL_RAM_GB}G"
-
-# Jika RAM sangat kecil (misal < 1GB), kita bisa asumsikan 2GB swap sebagai minimum
-if (( TOTAL_RAM_GB < 1 )); then
-    SWAP_SIZE="2G" # Contoh: Minimum 2GB swap
-    warning "Total RAM sangat kecil (${TOTAL_RAM_GB}GB), menggunakan swapfile minimum 2GB."
-else
-    # Untuk RAM 1GB atau lebih, gunakan 2x RAM
-    SWAP_SIZE="$((TOTAL_RAM_GB * 6))G"
-fi
-
-
-message "\nInformasi sistem:"
 echo " - Total RAM: ${TOTAL_RAM_GB}GB"
 echo " - Ukuran swapfile yang akan dibuat: $SWAP_SIZE"
 
 # ==========================================
-# 3. Setup Swapfile
+# 4. Setup Swapfile
 # ==========================================
 
 # Nonaktifkan swap yang ada
 message "\nMenonaktifkan swap yang aktif..."
-# Menggunakan `grep -q` untuk memeriksa apakah ada baris "swap" di `swapon --show`
 if swapon --show | grep -q "swap"; then
     swapoff -a || warning "Gagal menonaktifkan beberapa swap aktif."
     message "Semua swap aktif telah dinonaktifkan."
@@ -88,18 +77,16 @@ fi
 message "Membuat swapfile baru ($SWAP_SIZE) di $SWAPFILE..."
 if ! fallocate -l "$SWAP_SIZE" "$SWAPFILE"; then
     warning "fallocate gagal, mencoba menggunakan dd. Ini mungkin memakan waktu lebih lama..."
-    # Ekstrak angka dan unit dari SWAP_SIZE
+    
     NUMERIC_SIZE=$(echo "$SWAP_SIZE" | sed 's/[GgMm]$//')
     UNIT=$(echo "$SWAP_SIZE" | grep -o '[GgMm]$' | tr '[:upper:]' '[:lower:]')
 
-    # Konversi ke byte count untuk dd
-    BLOCK_SIZE="1M" # Default block size for dd
+    BLOCK_SIZE="1M"
     COUNT=$NUMERIC_SIZE
 
     if [ "$UNIT" == "g" ]; then
-        COUNT=$((NUMERIC_SIZE * 1024)) # Konversi GB ke MB
+        COUNT=$((NUMERIC_SIZE * 1024))
     fi
-    # Jika unit adalah 'm', count sudah dalam MB
 
     dd if=/dev/zero of="$SWAPFILE" bs=$BLOCK_SIZE count=$COUNT status=progress ||
         error "Gagal membuat swapfile dengan dd."
@@ -118,22 +105,19 @@ swapon "$SWAPFILE" || error "Gagal mengaktifkan swapfile."
 message "Swapfile diaktifkan."
 
 # ==========================================
-# 4. Konfigurasi Permanen
+# 5. Konfigurasi Permanen
 # ==========================================
 
 # Backup fstab
 message "\nMembackup /etc/fstab..."
 cp /etc/fstab "/etc/fstab.backup_$(date +%Y%m%d_%H%M%S)" || error "Gagal membackup /etc/fstab."
-message "Backup /etc/fstab dibuat: /etc/fstab.backup_$(date +%Y%m%d_%H%M%S)"
 
 # Update fstab
 if ! grep -q "^${SWAPFILE}" /etc/fstab; then
     echo "${SWAPFILE} none swap sw 0 0" | sudo tee -a /etc/fstab > /dev/null
     message "Swapfile ditambahkan ke /etc/fstab."
 else
-    # Jika sudah ada, pastikan barisnya benar
     if ! grep -q "^${SWAPFILE} none swap sw 0 0$" /etc/fstab; then
-        # Jika ada tapi formatnya salah, update
         sudo sed -i "s|^\(${SWAPFILE}\s\+.*\)|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Gagal memperbarui entri swapfile di /etc/fstab."
         message "Entri swapfile di /etc/fstab diperbarui."
     else
@@ -142,7 +126,7 @@ else
 fi
 
 # ==========================================
-# 5. Verifikasi
+# 6. Verifikasi
 # ==========================================
 message "\nVerifikasi hasil:"
 
@@ -156,12 +140,12 @@ message "\n3. Detail swapfile:"
 ls -lh "$SWAPFILE"
 
 # ==========================================
-# 6. Selesai
+# 7. Selesai
 # ==========================================
 cat <<EOF
 
 ==========================================
-KONFIGURASI SWAPFILE SELESAI
+KONFIGURASI SWAPFILE CUSTOM SELESAI
 
 Detail:
 - Lokasi: $SWAPFILE
@@ -175,4 +159,4 @@ swapon --show
 ==========================================
 EOF
 
-message "Script swapfile selesai dijalankan."
+message "Script swapfile custom selesai dijalankan."
