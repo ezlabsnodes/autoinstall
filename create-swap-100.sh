@@ -1,57 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# ================================================================
-# Swap-Heavy Tuning + RAM Cap with optional early-swap (Option 3)
-# Default target slice: rl-swarm.slice  (you can switch to user/system slices)
-# ================================================================
-
 # -----------------------------
 # Color helpers
 # -----------------------------
-RED='[0;31m'
-GREEN='[0;32m'
-YELLOW='[1;33m'
-BLUE='[0;34m'
-NC='[0m'
-status() { echo -e "
-${BLUE}>>> $*${NC}"; }
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+status() { echo -e "\n${BLUE}>>> $*${NC}"; }
 success() { echo -e "${GREEN}✓ $*${NC}"; }
 warning() { echo -e "${YELLOW}⚠ $*${NC}"; }
 error() { echo -e "${RED}✗ $*${NC}"; exit 1; }
 
 # -----------------------------
-# Configurable / CLI flags
+# Configurable
 # -----------------------------
-# Example:
-#   sudo SWAP_SIZE_GB=64 bash script.sh --swap-early        # Option 3: dorong swap lebih awal
-#   sudo bash script.sh --use-default-slices                 # pakai user.slice & system.slice
-#   sudo bash script.sh --slices rl-swarm.slice,custom.slice # set slice kustom
-#   sudo bash script.sh --swap-size-gb 32                    # tentukan swap tanpa prompt
-
+# Set SWAP_SIZE_GB via environment to skip prompt, e.g.:
+#   sudo SWAP_SIZE_GB=32 bash kuzco-swap-heavy-and-ram-cap.sh
 SERVICES_TO_DISABLE=(avahi-daemon cups bluetooth ModemManager)
 
-EARLY_SWAP=0                 # --swap-early atau -3 → MemoryHigh < MemoryMax
-USE_DEFAULT_SLICES=0         # --use-default-slices → target user.slice + system.slice
-TARGET_SLICES=("rl-swarm.slice") # default diminta user: rl-swarm.slice
-SWAP_SIZE_GB=""
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --swap-early|-3) EARLY_SWAP=1 ;;
-    --use-default-slices) USE_DEFAULT_SLICES=1 ;;
-    --slice) shift; TARGET_SLICES=("${1:-rl-swarm.slice}") ;;
-    --slices) shift; IFS=',' read -r -a TARGET_SLICES <<< "${1:-rl-swarm.slice}" ;;
-    --swap-size-gb) shift; SWAP_SIZE_GB="${1:-}" ;;
-    *) warning "Unknown arg: $1 (diabaikan)" ;;
-  esac
-  shift || true
-done
-
+# -----------------------------
+# Pre-checks
+# -----------------------------
 [ "$(id -u)" -eq 0 ] || error "Run as root (sudo)."
 
 # Detect systemd + cgroup mode
 if ! pidof systemd >/dev/null 2>&1; then
-  warning "System tidak tampak memakai systemd. RAM cap parts akan diskip."
+  warning "System does not appear to be using systemd. RAM cap parts will be skipped."
 fi
 
 CGROUP_V2=0
@@ -59,46 +35,8 @@ if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
   CGROUP_V2=1
   success "cgroup v2 detected."
 else
-  warning "cgroup v2 not detected. Aktifkan unified cgroup untuk RAM cap yang rapi."
+  warning "cgroup v2 not detected. RAM cap will be best-effort only. Consider enabling unified cgroup hierarchy."
 fi
-
-if [[ $USE_DEFAULT_SLICES -eq 1 ]]; then
-  TARGET_SLICES=("user.slice" "system.slice")
-fi
-
-status "Target slices: ${TARGET_SLICES[*]}"
-[[ $EARLY_SWAP -eq 1 ]] && success "Option 3 aktif: Dorong swap lebih awal (MemoryHigh < MemoryMax)"
-
-# -----------------------------
-# Helpers
-# -----------------------------
-write_slice_limits() {
-  # $1 = slice name, $2 = MemoryHigh string, $3 = MemoryMax string
-  local slice="$1"; local high="$2"; local max="$3"
-  if [[ "$slice" == "user.slice" || "$slice" == "system.slice" ]]; then
-    mkdir -p "/etc/systemd/system/${slice}.d"
-    cat > "/etc/systemd/system/${slice}.d/memory.conf" <<EOF
-[Slice]
-MemoryAccounting=yes
-MemoryHigh=${high}
-MemoryMax=${max}
-MemorySwapMax=infinity
-EOF
-  else
-    # Slice custom: pastikan unit slice ada
-    cat > "/etc/systemd/system/${slice}" <<EOF
-[Unit]
-Description=RL Swarm Global Cap Slice (${slice})
-
-[Slice]
-MemoryAccounting=yes
-MemoryHigh=${high}
-MemoryMax=${max}
-MemorySwapMax=infinity
-EOF
-  fi
-  success "Applied MemoryHigh=${high} MemoryMax=${max} to ${slice}"
-}
 
 # -----------------------------
 # 1) System limits (nofile/nproc/memlock)
@@ -204,15 +142,21 @@ done
 status "Checking swap configuration..."
 CURRENT_SWAP_MB=$(free -m | awk '/Swap/ {print $2}')
 RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
+RECOMMENDED_SWAP_MB=$((100 * 1024))
 
-# --- Auto swap size: fixed 100GB (override with --swap-size-gb or SWAP_SIZE_GB)
-DEFAULT_SWAP_GB=100
-if [ -z "${SWAP_SIZE_GB}" ]; then
-  SWAP_SIZE_GB=${DEFAULT_SWAP_GB}
+# Read desired swap size
+if [ -z "${SWAP_SIZE_GB:-}" ]; then
+  if [ "$CURRENT_SWAP_MB" -lt "$RECOMMENDED_SWAP_MB" ]; then
+    echo -n "Enter swap size in GB (default: $((RECOMMENDED_SWAP_MB/1024))): "
+    read -r SWAP_SIZE_GB || true
+  else
+    SWAP_SIZE_GB=$((CURRENT_SWAP_MB/1024))
+  fi
 fi
-if ! [[ "${SWAP_SIZE_GB}" =~ ^[0-9]+$ ]]; then
-  warning "Invalid --swap-size-gb value; fallback to ${DEFAULT_SWAP_GB}GB"
-  SWAP_SIZE_GB=${DEFAULT_SWAP_GB}
+
+# Fallback to recommended if empty or non-numeric
+if ! [[ "${SWAP_SIZE_GB:-}" =~ ^[0-9]+$ ]]; then
+  SWAP_SIZE_GB=$((RECOMMENDED_SWAP_MB/1024))
 fi
 SWAP_SIZE_MB=$((SWAP_SIZE_GB * 1024))
 SWAPFILE="/swapfile_${SWAP_SIZE_GB}GB"
@@ -237,6 +181,7 @@ fi
 # zswap (compressed in-RAM swap cache)
 if [ -d /sys/module/zswap ]; then
   status "Configuring zswap..."
+  # Use safe values; kernel expects Y/N for enabled
   echo Y > /sys/module/zswap/parameters/enabled || warning "Failed to enable zswap (kernel policy)"
   echo zstd > /sys/module/zswap/parameters/compressor || true
   echo 20 > /sys/module/zswap/parameters/max_pool_percent || true
@@ -256,9 +201,9 @@ swapon -a || true
 success "Cache dropped and swap cycled"
 
 # -----------------------------
-# 5) RAM cap (reserve 2GB) + Option 3 (early swap)
+# 5) Global RAM cap (reserve 2GB for the system)
 # -----------------------------
-status "Configuring RAM cap (reserve 2GB) on target slices..."
+status "Configuring a global-ish RAM cap (reserve 2GB)..."
 MEMTOTAL_KB=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
 RESERVE_KB=$((2 * 1024 * 1024)) # 2GB
 if [ "$MEMTOTAL_KB" -le "$RESERVE_KB" ]; then
@@ -268,28 +213,34 @@ else
   LIMIT_MB=$((LIMIT_KB / 1024))
   LIMIT_STR="${LIMIT_MB}M"
 
-  # Early-swap (Option 3): turunkan MemoryHigh jadi 85% dari MemoryMax,
-  # supaya reclaim dimulai lebih dini dan swap terasa lebih cepat dipakai.
-  if [[ $EARLY_SWAP -eq 1 ]]; then
-    HIGH_MB=$(( LIMIT_MB * 85 / 100 ))
-  else
-    HIGH_MB=$LIMIT_MB
-  fi
-  HIGH_STR="${HIGH_MB}M"
-
   mkdir -p /etc/systemd/system.conf.d
+  # Make sure memory accounting is on globally
   cat <<'EOF' > /etc/systemd/system.conf.d/memory-accounting.conf
 [Manager]
 DefaultMemoryAccounting=yes
 EOF
 
   if [ "$CGROUP_V2" -eq 1 ]; then
-    for slice in "${TARGET_SLICES[@]}"; do
-      write_slice_limits "$slice" "$HIGH_STR" "$LIMIT_STR"
-    done
-    warning "Catatan: Limit berlaku per-slice. Gabungan beberapa slice masih bisa melebihi ${LIMIT_STR}."
+    # Apply to user.slice and system.slice so *most* apps are constrained
+    mkdir -p /etc/systemd/system/user.slice.d /etc/systemd/system/system.slice.d
+    cat > /etc/systemd/system/user.slice.d/memory.conf <<EOF
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=${LIMIT_STR}
+MemoryMax=${LIMIT_STR}
+MemorySwapMax=infinity
+EOF
+    cat > /etc/systemd/system/system.slice.d/memory.conf <<EOF
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=${LIMIT_STR}
+MemoryMax=${LIMIT_STR}
+MemorySwapMax=infinity
+EOF
+    success "Applied MemoryHigh/MemoryMax=${LIMIT_STR} to user.slice & system.slice"
+    warning "Note: These are per-slice limits; combined usage can exceed ${LIMIT_STR}. True global cap on the root slice is not supported via systemd."
   else
-    warning "cgroup v2 tidak aktif — tidak bisa enforce MemoryMax secara bersih."
+    warning "cgroup v2 not active — cannot enforce MemoryMax cleanly. Consider enabling unified cgroups to honor the cap."
   fi
 fi
 
@@ -338,26 +289,62 @@ fi
 
 if [ "$CGROUP_V2" -eq 1 ]; then
   status "Slice limits (live):"
-  systemctl show -p MemoryCurrent -p MemoryHigh -p MemoryMax "${TARGET_SLICES[@]}" 2>/dev/null || true
-  echo -e "
-Paths for manual check:"
-  for s in "${TARGET_SLICES[@]}"; do
-    echo "${s}: /sys/fs/cgroup/${s}/memory.{current,high,max}"
-  done
+  systemctl show -p MemoryCurrent -p MemoryHigh -p MemoryMax user.slice system.slice 2>/dev/null || true
+  echo "\nPaths:"
+  echo "user.slice:   /sys/fs/cgroup/user.slice/memory.{current,high,max}"
+  echo "system.slice: /sys/fs/cgroup/system.slice/memory.{current,high,max}"
 fi
+# -----------------------------
+# 7) Create Systemd Slice
+# -----------------------------
+SLICE_FILE="/etc/systemd/system/rl-swarm.slice"
+RAM_REDUCTION_GB=3
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "❌ Error: Skrip ini harus dijalankan dengan sudo atau sebagai user root."
+  exit 1
+fi
+
+# Auto-detect jumlah CPU core
+cpu_cores=$(nproc)
+echo "CPU cores terdeteksi: ${cpu_cores}"
+
+# Hitung limit CPU: (total core - 1) * 100%
+cpu_limit_percentage=$(( (cpu_cores - 1) * 100 ))
+
+# Pastikan tidak minus (minimal 100% jika hanya 1 core)
+if [ "$cpu_limit_percentage" -lt 100 ]; then
+    cpu_limit_percentage=100
+fi
+
+total_gb=$(free -g | awk '/^Mem:/ {print $2}')
+echo "RAM terdeteksi: ${total_gb}G"
+
+if [ "$total_gb" -le "$RAM_REDUCTION_GB" ]; then
+  echo "❌ Error: Total RAM (${total_gb}G) terlalu kecil untuk dikurangi ${RAM_REDUCTION_GB}G."
+  exit 1
+fi
+
+limit_gb=$((total_gb - RAM_REDUCTION_GB))
+echo "Batas RAM akan diatur ke: ${limit_gb}G"
+echo "Batas CPU akan diatur ke: ${cpu_limit_percentage}% (${cpu_cores} core - 1 core)"
+
+slice_content="[Slice]
+Description=Slice for RL Swarm (auto-detected: ${limit_gb}G RAM, ${cpu_limit_percentage}% CPU from ${cpu_cores} cores)
+MemoryMax=${limit_gb}G
+CPUQuota=${cpu_limit_percentage}%
+"
+
+echo -e "$slice_content" | sudo tee "$SLICE_FILE" > /dev/null
 
 # -----------------------------
 # Done
 # -----------------------------
-elsecat() {
-  echo -e "
-${GREEN}✔ Optimization complete!${NC}"
-  echo -e "${YELLOW}Reboot recommended${NC} untuk mengunci limit di semua service/sesi."
-  echo -e "Setelah reboot, verifikasi:"
-  echo -e "  * free -h"
-  if [ "$CGROUP_V2" -eq 1 ]; then
-    echo -e "  * systemctl show -p MemoryCurrent -p MemoryHigh -p MemoryMax ${TARGET_SLICES[*]}"
-  fi
-  echo -e "  * vmstat 1 (pantau swap activity)"
-}
-elsecat
+echo -e "\n${GREEN}✔ Optimization complete!${NC}"
+echo -e "${YELLOW}Reboot recommended${NC} to fully apply all limits (especially slice MemoryMax)."
+echo "✅ File slice berhasil dibuat di $SLICE_FILE"
+echo -e "After reboot, verify:"
+echo -e "  * free -h"
+echo -e "  * cat /sys/fs/cgroup/user.slice/memory.{current,high,max}"
+echo -e "  * cat /sys/fs/cgroup/system.slice/memory.{current,high,max}"
+echo -e "  * vmstat 1 (watch swap activity)"
