@@ -6,9 +6,9 @@ warn(){ echo -e "\033[1;33m$*\033[0m"; }
 err(){ echo -e "\033[1;31m$*\033[0m" >&2; }
 trap 'err "Error on line $LINENO. Exiting."' ERR
 
-# Re-exec as root (we’ll run user-space steps as the original user)
+# Re-exec as root (we'll run user-space steps as the original user)
 if [ "$EUID" -ne 0 ]; then
-  echo "[INFO] Elevating to root…"
+  echo "[INFO] Elevating to root..."
   exec sudo -E bash "$0" "$@"
 fi
 export DEBIAN_FRONTEND=noninteractive
@@ -20,7 +20,7 @@ ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
 # =========================================================
 # STEP 1a — Create swap 100GB (your script)
 # =========================================================
-ok "[1/4] Writing swap (100G) creator…"
+ok "[1/4] Writing swap (100G) creator..."
 cat > /usr/local/bin/kuzco-swap-100g.sh <<'SWAP100'
 #!/bin/bash
 set -euo pipefail
@@ -131,7 +131,7 @@ chmod +x /usr/local/bin/kuzco-swap-100g.sh
 # =========================================================
 # STEP 1b — System optimization (your optimization script)
 # =========================================================
-ok "[2/4] Running system optimization…"
+ok "[2/4] Running system optimization..."
 cat > /usr/local/bin/kuzco-system-optim.sh <<'OPTIM'
 #!/bin/bash
 set -e
@@ -298,7 +298,7 @@ status "Current limits verification:"
 echo -e "${BLUE}Session limits:${NC}"
 ulimit -a | grep -E 'open files|processes|locked memory'
 echo -e "\n${BLUE}System-wide limits:${NC}"
-grep -E 'file-max|nr_open' /proc/sys/fs/
+cat /proc/sys/fs/file-max /proc/sys/fs/nr_open 2>/dev/null || true
 
 # Final message
 echo -e "\n${GREEN}✔ Optimization complete!${NC}"
@@ -316,7 +316,7 @@ chmod +x /usr/local/bin/kuzco-system-optim.sh
 # ======================================================
 # STEP 2 — Dependencies (Node.js + Yarn) — KEEP FUNCTIONS
 # ======================================================
-ok "[3/4] Installing Node.js/Yarn & build tools…"
+ok "[3/4] Installing Node.js/Yarn & build tools..."
 cat > /usr/local/bin/depedency-nodejs.sh <<'DEPS'
 #!/bin/bash
 set -euo pipefail
@@ -431,7 +431,7 @@ apt-get install -y expect unzip >/dev/null 2>&1 || true
 # =================================================
 # STEP 3 — Run gensyn node (KEEP functions/behavior)
 # =================================================
-ok "[4/4] Preparing & launching gensyn (screen: gensyn)…"
+ok "[4/4] Preparing & launching gensyn (screen: gensyn)..."
 sudo -u "$ORIG_USER" bash -lc '
 set -Eeuo pipefail
 
