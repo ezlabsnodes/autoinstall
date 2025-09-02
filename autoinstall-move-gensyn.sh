@@ -16,48 +16,185 @@ if [ "$EUID" -ne 0 ]; then
 fi
 export DEBIAN_FRONTEND=noninteractive
 
-# Resolve invoking user/home (for copying sources, etc.)
+# Resolve invoking user/home
 ORIG_USER=${SUDO_USER:-$(logname 2>/dev/null || whoami)}
 ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # =========================================================
-# STEP 1 — OPTIMIZE + CREATE 100GB SWAP
-# (swap-heavy sysctl, limits, disable services, zswap, RAM cap)
+# STEP 1 — CREATE 100G SWAP + OPTIMIZE (REPLACED WITH YOUR SCRIPTS)
 # =========================================================
-status "[1/4] System optimization & 100GB swap"
+status "[1/4] Creating 100GB swap and optimizing system…"
 
-cat > /usr/local/bin/kuzco-optimize-and-swap.sh <<'EOSWAP'
-#!/usr/bin/env bash
+# (1a) Create 100G swap (exact content you provided)
+cat > /usr/local/bin/create-swap-100g.sh <<'SWAP_SCRIPT'
+#!/bin/bash
 set -euo pipefail
-# -----------------------------
-# Color helpers
-# -----------------------------
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+
+# ==========================================
+# Fungsi-fungsi utilitas
+# ==========================================
+function message() {
+    echo -e "\033[0;32m[INFO] $1\033[0m"
+}
+
+function warning() {
+    echo -e "\033[0;33m[WARN] $1\033[0m"
+}
+
+function error() {
+    echo -e "\033[0;31m[ERROR] $1\033[0m" >&2
+    exit 1
+}
+
+# ==========================================
+# 1. Verifikasi Environment
+# ==========================================
+message "Memulai konfigurasi swapfile custom"
+
+# Cek root
+if [[ $EUID -ne 0 ]]; then
+    error "Script harus dijalankan sebagai root"
+fi
+
+# ==========================================
+# 2. Ukuran Swap Custom (Otomatis 100G)
+# ==========================================
+SWAP_SIZE="100G"
+SWAPFILE="/swapfile"
+
+message "Swapfile otomatis diatur ke $SWAP_SIZE"
+
+# ==========================================
+# 3. Informasi Sistem
+# ==========================================
+message "\nInformasi sistem:"
+TOTAL_RAM_GB=$(free -g | awk '/Mem:/ {print $2}')
+if [ "$TOTAL_RAM_GB" -eq 0 ]; then
+    TOTAL_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
+    TOTAL_RAM_GB=$(( (TOTAL_RAM_MB + 1023) / 1024 ))
+fi
+
+echo " - Total RAM: ${TOTAL_RAM_GB}GB"
+echo " - Ukuran swapfile yang akan dibuat: $SWAP_SIZE"
+
+# ==========================================
+# 4. Setup Swapfile
+# ==========================================
+message "\nMenonaktifkan swap yang aktif..."
+if swapon --show | grep -q "swap"; then
+    swapoff -a || warning "Gagal menonaktifkan beberapa swap aktif."
+    message "Semua swap aktif telah dinonaktifkan."
+else
+    warning "Tidak ada swap aktif yang terdeteksi."
+fi
+
+if [[ -f "$SWAPFILE" ]]; then
+    message "Menghapus swapfile lama: $SWAPFILE..."
+    rm -f "$SWAPFILE" || error "Gagal menghapus swapfile lama."
+fi
+
+message "Membuat swapfile baru ($SWAP_SIZE) di $SWAPFILE..."
+if ! fallocate -l "$SWAP_SIZE" "$SWAPFILE"; then
+    warning "fallocate gagal, mencoba dd..."
+    NUMERIC_SIZE=100
+    dd if=/dev/zero of="$SWAPFILE" bs=1G count=$NUMERIC_SIZE status=progress ||
+        error "Gagal membuat swapfile dengan dd."
+fi
+
+chmod 600 "$SWAPFILE" || error "Gagal mengatur permission swapfile."
+mkswap "$SWAPFILE" || error "Gagal memformat swapfile."
+swapon "$SWAPFILE" || error "Gagal mengaktifkan swapfile."
+message "Swapfile aktif."
+
+# ==========================================
+# 5. Konfigurasi Permanen
+# ==========================================
+message "\nMembackup /etc/fstab..."
+cp /etc/fstab "/etc/fstab.backup_$(date +%Y%m%d_%H%M%S)" || error "Backup gagal."
+
+if ! grep -q "^${SWAPFILE}" /etc/fstab; then
+    echo "${SWAPFILE} none swap sw 0 0" | tee -a /etc/fstab > /dev/null
+    message "Swapfile ditambahkan ke /etc/fstab."
+else
+    sed -i "s|^${SWAPFILE}.*|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Update fstab gagal."
+    message "Swapfile diupdate di /etc/fstab."
+fi
+
+# ==========================================
+# 6. Verifikasi
+# ==========================================
+message "\nVerifikasi hasil:"
+swapon --show
+free -h
+ls -lh "$SWAPFILE"
+
+cat <<EOF
+
+==========================================
+KONFIGURASI SWAPFILE SELESAI
+
+Detail:
+- Lokasi: $SWAPFILE
+- Ukuran: $SWAP_SIZE
+- RAM: ${TOTAL_RAM_GB}GB
+
+Verifikasi manual:
+free -h
+swapon --show
+==========================================
+EOF
+
+message "Script selesai."
+SWAP_SCRIPT
+chmod +x /usr/local/bin/create-swap-100g.sh
+/usr/local/bin/create-swap-100g.sh
+
+# (1b) Optimize system (exact content you provided)
+cat > /usr/local/bin/optimize-system.sh <<'OPT_SCRIPT'
+#!/bin/bash
+set -e
+
+# ==============================================
+# 1. FIRST DEFINE ALL FUNCTIONS AND VARIABLES
+# ==============================================
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Status functions
 status() { echo -e "\n${BLUE}>>> $*${NC}"; }
 success() { echo -e "${GREEN}✓ $*${NC}"; }
 warning() { echo -e "${YELLOW}⚠ $*${NC}"; }
 error() { echo -e "${RED}✗ $*${NC}"; exit 1; }
 
-SERVICES_TO_DISABLE=(avahi-daemon cups bluetooth ModemManager)
+# System services to disable
+SERVICES_TO_DISABLE=(
+    avahi-daemon
+    cups
+    bluetooth
+    ModemManager
+)
 
-[ "$(id -u)" -eq 0 ] || error "Run as root (sudo)."
+# ==============================================
+# 2. MAIN SCRIPT LOGIC
+# ==============================================
 
-if ! pidof systemd >/dev/null 2>&1; then
-  warning "System does not appear to be using systemd. RAM cap parts will be skipped."
+# Check root
+if [ "$(id -u)" -ne 0 ]; then
+    error "Script must be run as root. Use sudo or switch to root user."
 fi
 
-CGROUP_V2=0
-if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
-  CGROUP_V2=1; success "cgroup v2 detected."
-else
-  warning "cgroup v2 not detected. RAM cap will be best-effort only."
-fi
-
-# 1) Limits
+# 1. System Limits Optimization
 status "Optimizing system limits..."
-if ! grep -q "# Kuzco Optimization" /etc/security/limits.conf 2>/dev/null; then
-  cat <<'EOF' >> /etc/security/limits.conf
+
+# Configure system-wide limits
+if ! grep -q "# Kuzco Optimization" /etc/security/limits.conf; then
+    cat <<EOF >> /etc/security/limits.conf
 
 # Kuzco Optimization
 * soft nofile 1048576
@@ -73,15 +210,18 @@ root hard nproc unlimited
 root soft memlock unlimited
 root hard memlock unlimited
 EOF
-  success "Added limits to /etc/security/limits.conf"
+    success "Added limits to /etc/security/limits.conf"
 else
-  success "System limits already configured (skipped)"
+    success "System limits already configured (skipped)"
 fi
 
-ulimit -n 1048576 >/dev/null 2>&1 || warning "Couldn't increase current session limits."
+# Apply immediate session limits
+ulimit -n 1048576 >/dev/null 2>&1 || warning "Couldn't increase current session limits (reboot required)"
+success "Attempted to set immediate file descriptor limit"
 
+# Configure systemd limits
 mkdir -p /etc/systemd/system.conf.d/
-cat <<'EOF' > /etc/systemd/system.conf.d/limits.conf
+cat <<EOF > /etc/systemd/system.conf.d/limits.conf
 [Manager]
 DefaultLimitNOFILE=1048576
 DefaultLimitNPROC=infinity
@@ -89,173 +229,112 @@ DefaultLimitMEMLOCK=infinity
 EOF
 success "Configured systemd limits"
 
+# Configure pam limits
 if [ -f /etc/pam.d/common-session ] && ! grep -q "pam_limits.so" /etc/pam.d/common-session; then
-  echo "session required pam_limits.so" >> /etc/pam.d/common-session
-  success "Added PAM limits configuration"
+    echo "session required pam_limits.so" >> /etc/pam.d/common-session
+    success "Added PAM limits configuration"
+elif [ ! -f /etc/pam.d/common-session ]; then
+    warning "PAM common-session file not found"
 else
-  success "PAM limits already configured or not applicable (skipped)"
+    success "PAM limits already configured (skipped)"
 fi
 
-# 2) sysctl – swap-heavy
-status "Optimizing kernel parameters for swap-heavy behavior..."
+# 2. Kernel Parameters Optimization
+status "Optimizing kernel parameters..."
+
 if [ ! -f /etc/sysctl.d/99-kuzco.conf ]; then
-  cat <<'EOF' > /etc/sysctl.d/99-kuzco.conf
+    cat <<EOF > /etc/sysctl.d/99-kuzco.conf
 # Network
 net.core.somaxconn=8192
 net.ipv4.tcp_max_syn_backlog=8192
 net.ipv4.ip_local_port_range=1024 65535
+
 # Memory
-vm.swappiness=100
-vm.vfs_cache_pressure=50
-vm.dirty_ratio=10
-vm.dirty_background_ratio=5
-vm.overcommit_memory=1
-vm.overcommit_ratio=80
-vm.page-cluster=0
-vm.watermark_scale_factor=200
+vm.swappiness=10
+vm.dirty_ratio=60
+vm.dirty_background_ratio=2
+
 # File handles
 fs.file-max=1048576
 fs.nr_open=1048576
-# IPC
+
+# IPC (Important for DHT)
 kernel.msgmax=65536
 kernel.msgmnb=65536
 kernel.shmall=4294967296
 kernel.shmmax=17179869184
-# Process / VM maps
+
+# Process handling
 kernel.pid_max=4194304
 kernel.threads-max=4194304
 vm.max_map_count=262144
 EOF
-  sysctl -p /etc/sysctl.d/99-kuzco.conf >/dev/null 2>&1 || warning "sysctl apply returned non-zero."
-  success "Kernel parameters applied"
+    sysctl -p /etc/sysctl.d/99-kuzco.conf >/dev/null 2>&1
+    success "Kernel parameters optimized"
 else
-  warning "Existing 99-kuzco.conf detected; ensure swappiness=100 etc."
+    success "Kernel parameters already optimized (skipped)"
 fi
 
-# 3) Disable services
+# 3. Disable Unnecessary Services
 status "Disabling unnecessary services..."
-for svc in "${SERVICES_TO_DISABLE[@]}"; do
-  if systemctl is-enabled "$svc" 2>/dev/null | grep -q enabled; then
-    systemctl disable --now "$svc" >/dev/null 2>&1 && success "Disabled $svc" || warning "Failed to disable $svc"
-  else
-    success "$svc already disabled (skipped)"
-  fi
+
+for service in "${SERVICES_TO_DISABLE[@]}"; do
+    if systemctl is-enabled "$service" 2>/dev/null | grep -q "enabled"; then
+        systemctl disable --now "$service" >/dev/null 2>&1 && \
+            success "Disabled $service" || \
+            warning "Failed to disable $service"
+    else
+        success "$service already disabled (skipped)"
+    fi
 done
 
-# 4) Swap ensure (100GB default if SWAP_SIZE_GB unset)
-status "Checking swap configuration..."
-CURRENT_SWAP_MB=$(free -m | awk '/Swap/ {print $2}')
-RECOMMENDED_SWAP_MB=$((100 * 1024))
-: "${SWAP_SIZE_GB:=$((RECOMMENDED_SWAP_MB/1024))}"
-SWAP_SIZE_MB=$((SWAP_SIZE_GB * 1024))
-SWAPFILE="/swapfile_${SWAP_SIZE_GB}GB"
+# 4. Final System Updates
+status "Performing final updates..."
 
-if [ "$CURRENT_SWAP_MB" -lt "$SWAP_SIZE_MB" ]; then
-  status "Creating ${SWAP_SIZE_GB}GB swapfile at ${SWAPFILE}..."
-  [ -f "$SWAPFILE" ] && (swapoff "$SWAPFILE" 2>/dev/null || true; rm -f "$SWAPFILE")
-  dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SWAP_SIZE_MB" status=progress
-  chmod 600 "$SWAPFILE"
-  mkswap -f "$SWAPFILE"
-  swapon --discard "$SWAPFILE"
-  if ! grep -q "^$SWAPFILE" /etc/fstab; then
-    echo "$SWAPFILE none swap sw,discard=once,pri=100 0 0" >> /etc/fstab
-  else
-    sed -i "s|^$SWAPFILE.*|$SWAPFILE none swap sw,discard=once,pri=100 0 0|" /etc/fstab
-  fi
-  success "Swapfile created and enabled"
-else
-  success "Existing swap (${CURRENT_SWAP_MB}MB) >= desired (${SWAP_SIZE_MB}MB) — keeping."
+if command -v apt-get >/dev/null; then
+    apt-get update >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get -y upgrade >/dev/null 2>&1 || warning "Update failed"
+    apt-get -y autoremove >/dev/null 2>&1
+    apt-get clean >/dev/null 2>&1
+elif command -v yum >/dev/null; then
+    yum -y update >/dev/null 2>&1 || warning "Update failed"
+    yum -y autoremove >/dev/null 2>&1
+    yum clean all >/dev/null 2>&1
+elif command -v dnf >/dev/null; then
+    dnf -y update >/dev/null 2>&1 || warning "Update failed"
+    dnf -y autoremove >/dev/null 2>&1
 fi
 
-# zswap
-if [ -d /sys/module/zswap ]; then
-  status "Configuring zswap..."
-  echo Y > /sys/module/zswap/parameters/enabled || warning "Failed to enable zswap"
-  echo zstd > /sys/module/zswap/parameters/compressor || true
-  echo 20  > /sys/module/zswap/parameters/max_pool_percent || true
-  success "zswap configured (if supported)"
-else
-  warning "zswap not available on this kernel"
-fi
+# 5. Apply All Changes
+status "Applying all changes..."
+systemctl daemon-reload >/dev/null 2>&1 && \
+    success "Systemd daemon reloaded" || \
+    warning "Failed to reload systemd daemon"
 
-# Rebalance
-status "Rebalancing page cache / swap..."
-sync || true
-echo 3 > /proc/sys/vm/drop_caches || true
-swapoff -a || true
-swapon -a || true
-success "Cache dropped and swap cycled"
+# Verification
+status "Current limits verification:"
+echo -e "${BLUE}Session limits:${NC}"
+ulimit -a | grep -E 'open files|processes|locked memory'
+echo -e "\n${BLUE}System-wide limits:${NC}"
+cat /proc/sys/fs/file-max /proc/sys/fs/nr_open 2>/dev/null || true
 
-# 5) Global RAM cap (reserve 2GB)
-status "Configuring RAM cap (reserve 2GB for system)…"
-MEMTOTAL_KB=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
-RESERVE_KB=$((2 * 1024 * 1024))
-if [ "$MEMTOTAL_KB" -le "$RESERVE_KB" ]; then
-  warning "Total RAM <= 2GB; skipping cap."
-else
-  LIMIT_KB=$((MEMTOTAL_KB - RESERVE_KB))
-  LIMIT_MB=$((LIMIT_KB / 1024))
-  LIMIT_STR="${LIMIT_MB}M"
-
-  mkdir -p /etc/systemd/system.conf.d
-  cat <<'EOF' > /etc/systemd/system.conf.d/memory-accounting.conf
-[Manager]
-DefaultMemoryAccounting=yes
-EOF
-
-  if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
-    mkdir -p /etc/systemd/system/user.slice.d /etc/systemd/system/system.slice.d
-    cat > /etc/systemd/system/user.slice.d/memory.conf <<EOF
-[Slice]
-MemoryAccounting=yes
-MemoryHigh=${LIMIT_STR}
-MemoryMax=${LIMIT_STR}
-MemorySwapMax=infinity
-EOF
-    cat > /etc/systemd/system/system.slice.d/memory.conf <<EOF
-[Slice]
-MemoryAccounting=yes
-MemoryHigh=${LIMIT_STR}
-MemoryMax=${LIMIT_STR}
-MemorySwapMax=infinity
-EOF
-    success "Applied MemoryHigh/MemoryMax=${LIMIT_STR} to user.slice & system.slice"
-  else
-    warning "cgroup v2 not active — skip MemoryMax enforcement."
-  fi
-fi
-
-# 6) Updates
-status "Applying updates (quiet)…"
-if command -v apt-get >/dev/null 2>&1; then
-  apt-get update >/dev/null 2>&1 || true
-  DEBIAN_FRONTEND=noninteractive apt-get -y upgrade >/dev/null 2>&1 || warning "apt upgrade failed"
-  apt-get -y autoremove >/dev/null 2>&1 || true
-  apt-get clean  >/dev/null 2>&1 || true
-elif command -v dnf >/dev/null 2>&1; then
-  dnf -y update >/dev/null 2>&1 || warning "dnf update failed"
-elif command -v yum >/dev/null 2>&1; then
-  yum -y update >/dev/null 2>&1 || warning "yum update failed"
-fi
-
-# 7) Verify
-status "systemd daemon reload"; systemctl daemon-reload >/dev/null 2>&1 || true
-status "Current memory & swap:"; free -h || true
-status "Swap devices:"; swapon --show || true
-status "Kernel VM params (live):"
-for p in swappiness vfs_cache_pressure overcommit_memory overcommit_ratio; do
-  echo "$p: $(cat /proc/sys/vm/$p 2>/dev/null || echo n/a)"
-done
+# Final message
 echo -e "\n${GREEN}✔ Optimization complete!${NC}"
-warning "Reboot is recommended to fully apply limits."
-EOSWAP
-chmod +x /usr/local/bin/kuzco-optimize-and-swap.sh
-SWAP_SIZE_GB=100 /usr/local/bin/kuzco-optimize-and-swap.sh
+echo -e "${YELLOW}Some changes require a reboot to take full effect.${NC}"
+echo -e "Run this command to reboot: ${GREEN}reboot${NC}"
+
+echo -e "\n${BLUE}Verification commands after reboot:${NC}"
+echo "1. Check file limits: ${GREEN}ulimit -n${NC} (should show 1048576)"
+echo "2. Check kernel settings: ${GREEN}sysctl -a | grep -e file_max -e swappiness${NC}"
+echo "3. Check disabled services: ${GREEN}systemctl list-unit-files | grep -E 'avahi|cups|bluetooth|ModemManager'${NC}"
+OPT_SCRIPT
+chmod +x /usr/local/bin/optimize-system.sh
+/usr/local/bin/optimize-system.sh
 
 # =========================================================
 # STEP 2 — INSTALL DEPENDENCIES (Node.js, Yarn, Docker, Compose)
 # =========================================================
-status "[2/4] Installing dependencies (Node.js, Yarn, Docker, Compose)…"
+status "[2/4] Installing dependencies…"
 
 cat > /usr/local/bin/ez-deps.sh <<'EODEPS'
 #!/usr/bin/env bash
@@ -353,6 +432,10 @@ EODEPS
 chmod +x /usr/local/bin/ez-deps.sh
 /usr/local/bin/ez-deps.sh
 
+# Ensure extras for gensyn
+apt-get update -y >/dev/null 2>&1 || true
+apt-get install -y expect unzip >/dev/null 2>&1 || true
+
 # =========================================================
 # STEP 3 — ENSURE /root/ezlabs & REQUIRED FILES (with 5-min wait)
 # =========================================================
@@ -360,7 +443,7 @@ status "[3/4] Ensuring /root/ezlabs and required keys…"
 EZDIR="/root/ezlabs"
 mkdir -p "$EZDIR"
 
-WAIT_SECS=300   # 5 minutes total
+WAIT_SECS=300   # 5 minutes
 POLL_SECS=5
 
 declare -A FILES
@@ -398,9 +481,7 @@ candidates_for(){
 copy_if_found(){
   local dest="$EZDIR/$1"; shift
   for src in "$@"; do
-    # if src is already the dest and exists -> done
     if [[ "$src" == "$dest" && -f "$dest" ]]; then return 0; fi
-    # if src path exists (and is not dest), copy
     if [ -f "$src" ]; then
       cp -f "$src" "$dest"
       ok "Copied $(basename "$dest") from: $src"
@@ -428,7 +509,7 @@ attempt_autofill(){
   done
 }
 
-# Initial auto-copy attempt
+# Initial attempt to auto-copy (silent except success lines)
 attempt_autofill
 list_missing
 
@@ -453,7 +534,6 @@ if ((${#missing[@]})); then
       exit 1
     fi
 
-    # live status line (dynamic list)
     echo -e "\r${YELLOW}Waiting... ${remaining}s left. ${RED}Please Copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}   "
     sleep "$POLL_SECS"
   done
@@ -467,6 +547,7 @@ fi
 status "[4/4] Starting Gensyn node via systemd.sh…"
 bash -lc 'cd && rm -rf officialauto.zip systemd.sh && wget -O systemd.sh https://raw.githubusercontent.com/ezlabsnodes/gensyn/main/systemd.sh && chmod +x systemd.sh && ./systemd.sh'
 
+ok "Gensyn systemd unit deployed."
 
 echo
 echo -e "${BLUE}Follow live logs:${NC}   journalctl -u rl-swarm -f -o cat"
