@@ -316,7 +316,7 @@ status "Current limits verification:"
 echo -e "${BLUE}Session limits:${NC}"
 ulimit -a | grep -E 'open files|processes|locked memory'
 echo -e "\n${BLUE}System-wide limits:${NC}"
-grep -E 'file-max|nr_open' /proc/sys/fs/
+cat /proc/sys/fs/file-max /proc/sys/fs/nr_open 2>/dev/null || true
 
 # Final message
 echo -e "\n${GREEN}✔ Optimization complete!${NC}"
@@ -329,8 +329,8 @@ echo "2. Check kernel settings: ${GREEN}sysctl -a | grep -e file_max -e swappine
 echo "3. Check disabled services: ${GREEN}systemctl list-unit-files | grep -E 'avahi|cups|bluetooth|ModemManager'${NC}"
 OPT_SCRIPT
 chmod +x /usr/local/bin/optimize-system.sh
-echo -e "\n${BLUE}System-wide limits:${NC}"
-cat /proc/sys/fs/file-max /proc/sys/fs/nr_open 2>/dev/null || true
+/usr/local/bin/optimize-system.sh
+
 # =========================================================
 # STEP 2 — INSTALL DEPENDENCIES (Node.js, Yarn, Docker, Compose)
 # =========================================================
