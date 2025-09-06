@@ -41,7 +41,7 @@ if [[ $EUID -ne 0 ]]; then error "Script harus dijalankan sebagai root"; fi
 # ==========================================
 # 2. Ukuran Swap Custom (Otomatis 100G)
 # ==========================================
-SWAP_SIZE="100G"
+SWAP_SIZE="50G"
 SWAPFILE="/swapfile"
 message "Swapfile otomatis diatur ke $SWAP_SIZE"
 
