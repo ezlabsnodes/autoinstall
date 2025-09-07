@@ -54,6 +54,41 @@ fi
 echo " - Total RAM: ${TOTAL_RAM_GB}GB"
 echo " - Ukuran swapfile yang akan dibuat: $SWAP_SIZE"
 
+# Periksa ruang disk
+AVAILABLE_SPACE_KB=$(df / | awk 'NR==2 {print $4}')
+NUMERIC_SIZE=$(echo "$SWAP_SIZE" | sed 's/[GgMm]$//')
+UNIT=$(echo "$SWAP_SIZE" | grep -o '[GgMm]$' | tr '[:upper:]' '[:lower:]')
+
+# Konversi ke KB
+if [ "$UNIT" == "g" ]; then
+    SWAP_SIZE_KB=$((NUMERIC_SIZE * 1024 * 1024))
+else
+    SWAP_SIZE_KB=$((NUMERIC_SIZE * 1024))
+fi
+
+# Periksa apakah ruang cukup
+if [ "$AVAILABLE_SPACE_KB" -lt "$SWAP_SIZE_KB" ]; then
+    AVAILABLE_SPACE_MB=$((AVAILABLE_SPACE_KB / 1024))
+    warning "Ruang disk tidak cukup di root partition!"
+    echo "Tersedia: ${AVAILABLE_SPACE_MB}M, Dibutuhkan: ${SWAP_SIZE}"
+    
+    read -p "Gunakan lokasi alternatif? (y/N): " USE_ALT_LOCATION
+    if [[ "$USE_ALT_LOCATION" =~ ^[Yy]$ ]]; then
+        message "Partisi yang tersedia:"
+        df -h | grep -E "^(/dev/|Filesystem)" | head -6
+        read -p "Masukkan path mount point alternatif (contoh: /home): " ALTERNATIVE_PATH
+        
+        if [ ! -d "$ALTERNATIVE_PATH" ]; then
+            error "Path $ALTERNATIVE_PATH tidak valid"
+        fi
+        
+        SWAPFILE="${ALTERNATIVE_PATH}/swapfile"
+        message "Menggunakan lokasi alternatif: $SWAPFILE"
+    else
+        error "Ruang disk tidak cukup. Batalkan operasi."
+    fi
+fi
+
 # ==========================================
 # 4. Setup Swapfile
 # ==========================================
@@ -78,14 +113,11 @@ message "Membuat swapfile baru ($SWAP_SIZE) di $SWAPFILE..."
 if ! fallocate -l "$SWAP_SIZE" "$SWAPFILE"; then
     warning "fallocate gagal, mencoba menggunakan dd. Ini mungkin memakan waktu lebih lama..."
     
-    NUMERIC_SIZE=$(echo "$SWAP_SIZE" | sed 's/[GgMm]$//')
-    UNIT=$(echo "$SWAP_SIZE" | grep -o '[GgMm]$' | tr '[:upper:]' '[:lower:]')
-
     BLOCK_SIZE="1M"
-    COUNT=$NUMERIC_SIZE
-
     if [ "$UNIT" == "g" ]; then
         COUNT=$((NUMERIC_SIZE * 1024))
+    else
+        COUNT=$NUMERIC_SIZE
     fi
 
     dd if=/dev/zero of="$SWAPFILE" bs=$BLOCK_SIZE count=$COUNT status=progress ||
