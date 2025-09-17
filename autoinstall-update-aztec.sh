@@ -96,4 +96,4 @@ echo
 echo "Check status:"
 echo "  $COMPOSE_CMD -f \"$COMPOSE_FILE\" ps"
 echo "Follow logs (Ctrl+C to exit):"
-echo "  docker logs -f aztec-sequencer"
+echo "  docker logs -f --tail 200 aztec-sequencer"
