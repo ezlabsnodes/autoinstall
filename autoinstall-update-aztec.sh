@@ -72,8 +72,12 @@ cp -a "$COMPOSE_FILE" "$COMPOSE_FILE.bak.$TS"
 # Replace any existing aztecprotocol/aztec:<tag> with the new version
 # Works even if current tag isn't 1.2.1.
 sed -i -E "s|(image:\s*aztecprotocol/aztec:)[^[:space:]]+|\1${AZTEC_VERSION}|g" "$COMPOSE_FILE"
-
 ok "Backed up previous compose: $COMPOSE_FILE.bak.$TS"
+
+# ========= Step 4b: Ensure --network testnet in compose =========
+ok "[4b/5] Forcing --network testnet in compose …"
+# Hanya ganti jika masih alpha-testnet
+sed -i 's/--network alpha-testnet/--network testnet/g' "$COMPOSE_FILE"
 
 # ========= Step 5: Bring it back up =========
 ok "[5/5] Starting Aztec with Docker Compose…"
