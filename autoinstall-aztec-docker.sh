@@ -251,7 +251,7 @@ services:
       - 40400:40400/udp
       - 8080:8080
     volumes:
-      - /root/.aztec/alpha-testnet/data/:/data
+      - /root/.aztec/testnet/data/:/data
 YAML
 
 # ============ Bring up docker compose ============
