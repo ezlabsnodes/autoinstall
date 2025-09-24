@@ -10,7 +10,7 @@ trap 'err "Error on line $LINENO. Exiting."' ERR
 
 # ========= Config =========
 # You can override version via: ./aztec-upgrade.sh 1.2.2
-AZTEC_VERSION="${1:-2.0.2}"
+AZTEC_VERSION="${1:-2.0.3}"
 
 # Resolve home dir (works with sudo)
 USER_NAME=${SUDO_USER:-$(whoami)}
