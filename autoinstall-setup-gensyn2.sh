@@ -12,9 +12,14 @@ trap 'err "Error on line $LINENO. Exiting."' ERR
 # Elevate to root if needed
 if [ "$EUID" -ne 0 ]; then
   echo "[INFO] Elevating to root…"
-  exec sudo -E bash "$0" "$@"
+  # The -E flag preserves the user's environment variables.
+  # The -p flag prompts for a password and ensures it works in non-interactive mode.
+  # The script re-executes itself with sudo privileges.
+  if ! sudo -E bash "$0" "$@"; then
+    echo "Error: Failed to elevate privileges to root. Please run the script with 'sudo'."
+    exit 1
+  fi
 fi
-export DEBIAN_FRONTEND=noninteractive
 
 # Resolve invoking user/home
 ORIG_USER=${SUDO_USER:-$(logname 2>/dev/null || whoami)}
