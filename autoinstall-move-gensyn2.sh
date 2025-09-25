@@ -21,18 +21,20 @@ ORIG_USER=${SUDO_USER:-$(logname 2>/dev/null || whoami)}
 ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
-# =========================================================
-# STEP 1 — CREATE SWAP (MANUAL INPUT) + OPTIMIZE SYSTEM
-# =========================================================
-status "[1/4] Creating swap and optimizing system…"
+# ==========================================
+# 2. Ukuran Swap Custom (Manual Input)
+# ==========================================
+SWAPFILE="/swapfile"
 
-# (1a) Create swap (manual input version — functions kept)
-cat > /usr/local/bin/create-swap-100g.sh <<'SWAP_SCRIPT'
-#!/bin/bash
-set -euo pipefail
+# Prompt user for swap size
+read -p "Input Swap (Example: 4G, 16G, 50G): " SWAP_SIZE
+if [[ -z "$SWAP_SIZE" ]]; then
+    error "Ukuran swap tidak boleh kosong."
+fi
+message "Ukuran swapfile diatur ke $SWAP_SIZE"
 
 # ==========================================
-# Utility functions (kept as-is)
+# Fungsi-fungsi utilitas
 # ==========================================
 function message() {
     echo -e "\033[0;32m[INFO] $1\033[0m"
@@ -48,111 +50,83 @@ function error() {
 }
 
 # ==========================================
-# 1. Environment Verification
+# 1. Verifikasi Environment
 # ==========================================
-message "Starting custom swapfile configuration"
+message "Memulai konfigurasi swapfile custom"
 
-# Require root
+# Cek root
 if [[ $EUID -ne 0 ]]; then
-    error "This script must be run as root"
+    error "Script harus dijalankan sebagai root"
 fi
 
 # ==========================================
-# 2. Swap Size (MANUAL INPUT)
+# 2. Ukuran Swap Custom (Otomatis 100G)
 # ==========================================
+SWAP_SIZE="100G"
 SWAPFILE="/swapfile"
 
-while :; do
-    read -rp "Enter swapfile size (e.g: 50G ): " SWAP_SIZE
-    # valid: number + G/g or M/m
-    if [[ "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]]; then
-        break
-    fi
-    warning "Invalid format. Use a number followed by G or M (e.g., 8G or 4096M)."
-done
-
-message "Swapfile will be created with size: $SWAP_SIZE"
+message "Swapfile otomatis diatur ke $SWAP_SIZE"
 
 # ==========================================
-# 3. System Info
+# 3. Informasi Sistem
 # ==========================================
-message "\nSystem information:"
+message "\nInformasi sistem:"
 TOTAL_RAM_GB=$(free -g | awk '/Mem:/ {print $2}')
-if [ "${TOTAL_RAM_GB:-0}" -eq 0 ]; then
+if [ "$TOTAL_RAM_GB" -eq 0 ]; then
     TOTAL_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
     TOTAL_RAM_GB=$(( (TOTAL_RAM_MB + 1023) / 1024 ))
 fi
 
 echo " - Total RAM: ${TOTAL_RAM_GB}GB"
-echo " - Planned swapfile size: $SWAP_SIZE"
-
-# Optional: free space check on root mount
-ROOT_AVAIL_BYTES=$(df --output=avail -B1 / | tail -1)
-case "$SWAP_SIZE" in
-  *[Gg]) REQ_BYTES=$(( ${SWAP_SIZE%[Gg]} * 1024 * 1024 * 1024 ));;
-  *[Mm]) REQ_BYTES=$(( ${SWAP_SIZE%[Mm]} * 1024 * 1024 ));;
-esac
-if (( ROOT_AVAIL_BYTES <= REQ_BYTES )); then
-    warning "Free disk space may be insufficient for a $SWAP_SIZE swapfile."
-    read -rp "Proceed anyway? [y/N]: " yn
-    [[ "${yn,,}" == "y" ]] || error "Aborted by user."
-fi
+echo " - Ukuran swapfile yang akan dibuat: $SWAP_SIZE"
 
 # ==========================================
-# 4. Swapfile Setup
+# 4. Setup Swapfile
 # ==========================================
-message "\nDisabling active swap (if any)..."
+message "\nMenonaktifkan swap yang aktif..."
 if swapon --show | grep -q "swap"; then
-    swapoff -a || warning "Failed to disable some active swap."
-    message "All active swap has been disabled."
+    swapoff -a || warning "Gagal menonaktifkan beberapa swap aktif."
+    message "Semua swap aktif telah dinonaktifkan."
 else
-    warning "No active swap detected."
+    warning "Tidak ada swap aktif yang terdeteksi."
 fi
 
 if [[ -f "$SWAPFILE" ]]; then
-    message "Removing old swapfile: $SWAPFILE..."
-    rm -f "$SWAPFILE" || error "Failed to remove old swapfile."
+    message "Menghapus swapfile lama: $SWAPFILE..."
+    rm -f "$SWAPFILE" || error "Gagal menghapus swapfile lama."
 fi
 
-message "Creating new swapfile ($SWAP_SIZE) at $SWAPFILE..."
+message "Membuat swapfile baru ($SWAP_SIZE) di $SWAPFILE..."
 if ! fallocate -l "$SWAP_SIZE" "$SWAPFILE"; then
-    warning "fallocate failed, falling back to dd..."
-    if [[ "$SWAP_SIZE" =~ ^([0-9]+)[Gg]$ ]]; then
-        COUNT="${BASH_REMATCH[1]}"
-        dd if=/dev/zero of="$SWAPFILE" bs=1G count="$COUNT" status=progress || \
-            error "Failed to create swapfile with dd (GiB)."
-    elif [[ "$SWAP_SIZE" =~ ^([0-9]+)[Mm]$ ]]; then
-        COUNT="${BASH_REMATCH[1]}"
-        dd if=/dev/zero of="$SWAPFILE" bs=1M count="$COUNT" status=progress || \
-            error "Failed to create swapfile with dd (MiB)."
-    else
-        error "Unrecognized size during dd fallback."
-    fi
+    warning "fallocate gagal, mencoba dd..."
+    NUMERIC_SIZE=100
+    dd if=/dev/zero of="$SWAPFILE" bs=1G count=$NUMERIC_SIZE status=progress ||
+        error "Gagal membuat swapfile dengan dd."
 fi
 
-chmod 600 "$SWAPFILE" || error "Failed to set swapfile permissions."
-mkswap "$SWAPFILE" || error "Failed to format swapfile."
-swapon "$SWAPFILE" || error "Failed to enable swapfile."
-message "Swapfile is now active."
+chmod 600 "$SWAPFILE" || error "Gagal mengatur permission swapfile."
+mkswap "$SWAPFILE" || error "Gagal memformat swapfile."
+swapon "$SWAPFILE" || error "Gagal mengaktifkan swapfile."
+message "Swapfile aktif."
 
 # ==========================================
-# 5. Persistence
+# 5. Konfigurasi Permanen
 # ==========================================
-message "\nBacking up /etc/fstab..."
-cp /etc/fstab "/etc/fstab.backup_$(date +%Y%m%d_%H%M%S)" || error "Backup failed."
+message "\nMembackup /etc/fstab..."
+cp /etc/fstab "/etc/fstab.backup_$(date +%Y%m%d_%H%M%S)" || error "Backup gagal."
 
 if ! grep -q "^${SWAPFILE}" /etc/fstab; then
     echo "${SWAPFILE} none swap sw 0 0" | tee -a /etc/fstab > /dev/null
-    message "Swapfile entry appended to /etc/fstab."
+    message "Swapfile ditambahkan ke /etc/fstab."
 else
-    sed -i "s|^${SWAPFILE}.*|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Failed to update fstab."
-    message "Swapfile entry updated in /etc/fstab."
+    sed -i "s|^${SWAPFILE}.*|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Update fstab gagal."
+    message "Swapfile diupdate di /etc/fstab."
 fi
 
 # ==========================================
-# 6. Verification
+# 6. Verifikasi
 # ==========================================
-message "\nVerifying result:"
+message "\nVerifikasi hasil:"
 swapon --show
 free -h
 ls -lh "$SWAPFILE"
@@ -160,25 +134,25 @@ ls -lh "$SWAPFILE"
 cat <<EOF
 
 ==========================================
-SWAPFILE CONFIGURATION COMPLETE
+KONFIGURASI SWAPFILE SELESAI
 
-Details:
-- Location: $SWAPFILE
-- Size: $SWAP_SIZE
+Detail:
+- Lokasi: $SWAPFILE
+- Ukuran: $SWAP_SIZE
 - RAM: ${TOTAL_RAM_GB}GB
 
-Manual verification:
-  free -h
-  swapon --show
+Verifikasi manual:
+free -h
+swapon --show
 ==========================================
 EOF
 
-message "Script finished."
+message "Script selesai."
 SWAP_SCRIPT
 chmod +x /usr/local/bin/create-swap-100g.sh
 /usr/local/bin/create-swap-100g.sh
 
-# (1b) Optimize system (unchanged)
+# (1b) Optimize system (exact content you provided)
 cat > /usr/local/bin/optimize-system.sh <<'OPT_SCRIPT'
 #!/bin/bash
 set -e
@@ -542,8 +516,8 @@ attempt_autofill
 list_missing
 
 if ((${#missing[@]})); then
-  echo -e "\n${YELLOW}Waiting up to 5 minutes to copy the following files${NC}"
-  echo -e "${RED}Please copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
+  echo -e "\n${YELLOW}Waiting up to 5 minutes for copy the following files${NC}"
+  echo -e "${RED}Please Copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
 
   deadline=$(( $(date +%s) + WAIT_SECS ))
   while :; do
@@ -557,12 +531,12 @@ if ((${#missing[@]})); then
     now=$(date +%s); remaining=$((deadline - now))
     if (( remaining <= 0 )); then
       echo -e "\n${RED}Timeout waiting for files.${NC}"
-      echo -e "${RED}Please copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
+      echo -e "${RED}Please Copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
       echo -e "\nAfter copying, re-run: ${GREEN}./$(basename "$0")${NC}\n"
       exit 1
     fi
 
-    echo -e "\r${YELLOW}Waiting... ${remaining}s left. ${RED}Please copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}   "
+    echo -e "\r${YELLOW}Waiting... ${remaining}s left. ${RED}Please Copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}   "
     sleep "$POLL_SECS"
   done
 else
