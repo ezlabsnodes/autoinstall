@@ -12,12 +12,7 @@ trap 'err "Error on line $LINENO. Exiting."' ERR
 # Elevate to root if needed
 if [ "$EUID" -ne 0 ]; then
   echo "[INFO] Elevating to root…"
-  if ! sudo -E bash "$0" "$@"; then
-    err "Failed to elevate privileges. Please run with 'sudo'."
-    exit 1
-  fi
-  # This part of the script will not be reached if sudo is successful.
-  exit 0
+  exec sudo -E bash "$0" "$@"
 fi
 export DEBIAN_FRONTEND=noninteractive
 
@@ -27,29 +22,29 @@ ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # =========================================================
-# STEP 1 — CREATE SWAP + OPTIMIZE (REPLACED WITH YOUR SCRIPTS)
+# STEP 1 — CREATE SWAP (MANUAL INPUT) + OPTIMIZE SYSTEM
 # =========================================================
 status "[1/4] Creating swap and optimizing system…"
 
-# (1a) Create manual swap (modified for manual input)
-cat > /usr/local/bin/create-swap.sh <<'SWAP_SCRIPT'
+# (1a) Create swap (manual input version — functions kept)
+cat > /usr/local/bin/create-swap-100g.sh <<'SWAP_SCRIPT'
 #!/bin/bash
 set -euo pipefail
 
 # ==========================================
-# Utility functions
+# Utility functions (kept as-is)
 # ==========================================
 function message() {
-  echo -e "\033[0;32m[INFO] $1\033[0m"
+    echo -e "\033[0;32m[INFO] $1\033[0m"
 }
 
 function warning() {
-  echo -e "\033[0;33m[WARN] $1\033[0m"
+    echo -e "\033[0;33m[WARN] $1\033[0m"
 }
 
 function error() {
-  echo -e "\033[0;31m[ERROR] $1\033[0m" >&2
-  exit 1
+    echo -e "\033[0;31m[ERROR] $1\033[0m" >&2
+    exit 1
 }
 
 # ==========================================
@@ -57,84 +52,107 @@ function error() {
 # ==========================================
 message "Starting custom swapfile configuration"
 
-# Check for root
+# Require root
 if [[ $EUID -ne 0 ]]; then
-  error "This script must be run as root."
+    error "This script must be run as root"
 fi
 
 # ==========================================
-# 2. Custom Swap Size (Manual)
+# 2. Swap Size (MANUAL INPUT)
 # ==========================================
 SWAPFILE="/swapfile"
 
-# Prompt user for swap size
-read -p "Enter the desired swap size (e.g., 4G, 16G, 100G): " SWAP_SIZE
-if [[ -z "$SWAP_SIZE" ]]; then
-  error "Swap size cannot be empty."
-fi
-message "Swapfile size is set to $SWAP_SIZE"
+while :; do
+    read -rp "Enter swapfile size (e.g., 4G or 8192M): " SWAP_SIZE
+    # valid: number + G/g or M/m
+    if [[ "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]]; then
+        break
+    fi
+    warning "Invalid format. Use a number followed by G or M (e.g., 8G or 4096M)."
+done
+
+message "Swapfile will be created with size: $SWAP_SIZE"
 
 # ==========================================
-# 3. System Information
+# 3. System Info
 # ==========================================
 message "\nSystem information:"
 TOTAL_RAM_GB=$(free -g | awk '/Mem:/ {print $2}')
-if [ "$TOTAL_RAM_GB" -eq 0 ]; then
-  TOTAL_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
-  TOTAL_RAM_GB=$(( (TOTAL_RAM_MB + 1023) / 1024 ))
+if [ "${TOTAL_RAM_GB:-0}" -eq 0 ]; then
+    TOTAL_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
+    TOTAL_RAM_GB=$(( (TOTAL_RAM_MB + 1023) / 1024 ))
 fi
 
 echo " - Total RAM: ${TOTAL_RAM_GB}GB"
-echo " - Swapfile size to be created: $SWAP_SIZE"
+echo " - Planned swapfile size: $SWAP_SIZE"
+
+# Optional: free space check on root mount
+ROOT_AVAIL_BYTES=$(df --output=avail -B1 / | tail -1)
+case "$SWAP_SIZE" in
+  *[Gg]) REQ_BYTES=$(( ${SWAP_SIZE%[Gg]} * 1024 * 1024 * 1024 ));;
+  *[Mm]) REQ_BYTES=$(( ${SWAP_SIZE%[Mm]} * 1024 * 1024 ));;
+esac
+if (( ROOT_AVAIL_BYTES <= REQ_BYTES )); then
+    warning "Free disk space may be insufficient for a $SWAP_SIZE swapfile."
+    read -rp "Proceed anyway? [y/N]: " yn
+    [[ "${yn,,}" == "y" ]] || error "Aborted by user."
+fi
 
 # ==========================================
 # 4. Swapfile Setup
 # ==========================================
-message "\nDeactivating active swap..."
+message "\nDisabling active swap (if any)..."
 if swapon --show | grep -q "swap"; then
-  swapoff -a || warning "Failed to deactivate some active swaps."
-  message "All active swaps have been deactivated."
+    swapoff -a || warning "Failed to disable some active swap."
+    message "All active swap has been disabled."
 else
-  warning "No active swap detected."
+    warning "No active swap detected."
 fi
 
 if [[ -f "$SWAPFILE" ]]; then
-  message "Deleting old swapfile: $SWAPFILE..."
-  rm -f "$SWAPFILE" || error "Failed to delete old swapfile."
+    message "Removing old swapfile: $SWAPFILE..."
+    rm -f "$SWAPFILE" || error "Failed to remove old swapfile."
 fi
 
 message "Creating new swapfile ($SWAP_SIZE) at $SWAPFILE..."
 if ! fallocate -l "$SWAP_SIZE" "$SWAPFILE"; then
-  warning "fallocate failed, trying dd..."
-  # Extract numeric part from SWAP_SIZE (e.g., '100G' -> 100)
-  NUMERIC_SIZE=$(echo "$SWAP_SIZE" | sed 's/[^0-9]//g')
-  dd if=/dev/zero of="$SWAPFILE" bs=1G count=$NUMERIC_SIZE status=progress || \
-      error "Failed to create swapfile with dd."
+    warning "fallocate failed, falling back to dd..."
+    if [[ "$SWAP_SIZE" =~ ^([0-9]+)[Gg]$ ]]; then
+        COUNT="${BASH_REMATCH[1]}"
+        dd if=/dev/zero of="$SWAPFILE" bs=1G count="$COUNT" status=progress || \
+            error "Failed to create swapfile with dd (GiB)."
+    elif [[ "$SWAP_SIZE" =~ ^([0-9]+)[Mm]$ ]]; then
+        COUNT="${BASH_REMATCH[1]}"
+        dd if=/dev/zero of="$SWAPFILE" bs=1M count="$COUNT" status=progress || \
+            error "Failed to create swapfile with dd (MiB)."
+    else
+        error "Unrecognized size during dd fallback."
+    fi
 fi
 
 chmod 600 "$SWAPFILE" || error "Failed to set swapfile permissions."
 mkswap "$SWAPFILE" || error "Failed to format swapfile."
-swapon "$SWAPFILE" || error "Failed to activate swapfile."
-message "Swapfile is active."
+swapon "$SWAPFILE" || error "Failed to enable swapfile."
+message "Swapfile is now active."
 
 # ==========================================
-# 5. Permanent Configuration
+# 5. Persistence
 # ==========================================
 message "\nBacking up /etc/fstab..."
 cp /etc/fstab "/etc/fstab.backup_$(date +%Y%m%d_%H%M%S)" || error "Backup failed."
 
 if ! grep -q "^${SWAPFILE}" /etc/fstab; then
-  echo "${SWAPFILE} none swap sw 0 0" | tee -a /etc/fstab > /dev/null
-  message "Swapfile added to /etc/fstab."
+    echo "${SWAPFILE} none swap sw 0 0" | tee -a /etc/fstab > /dev/null
+    message "Swapfile entry appended to /etc/fstab."
 else
-  sed -i "s|^${SWAPFILE}.*|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Failed to update fstab."
-  message "Swapfile updated in /etc/fstab."
+    sed -i "s|^${SWAPFILE}.*|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Failed to update fstab."
+    message "Swapfile entry updated in /etc/fstab."
 fi
 
 # ==========================================
 # 6. Verification
 # ==========================================
-message "\nVerification results:"
+message "\nVerifying result:"
 swapon --show
 free -h
 ls -lh "$SWAPFILE"
@@ -150,17 +168,17 @@ Details:
 - RAM: ${TOTAL_RAM_GB}GB
 
 Manual verification:
-free -h
-swapon --show
+  free -h
+  swapon --show
 ==========================================
 EOF
 
 message "Script finished."
 SWAP_SCRIPT
-chmod +x /usr/local/bin/create-swap.sh
-/usr/local/bin/create-swap.sh
+chmod +x /usr/local/bin/create-swap-100g.sh
+/usr/local/bin/create-swap-100g.sh
 
-# (1b) Optimize system (exact content you provided)
+# (1b) Optimize system (unchanged)
 cat > /usr/local/bin/optimize-system.sh <<'OPT_SCRIPT'
 #!/bin/bash
 set -e
@@ -368,68 +386,68 @@ sudo apt-get autoremove -y
 
 info "Installing essential build tools…"
 install_packages \
-    git clang cmake build-essential openssl pkg-config libssl-dev \
-    wget htop tmux jq make gcc tar ncdu protobuf-compiler \
-    default-jdk aptitude squid apache2-utils file lsof zip unzip \
-    openssh-server sed lz4 aria2 pv \
-    python3 python3-venv python3-pip python3-dev screen snapd flatpak \
-    nano automake autoconf nvme-cli libgbm-dev libleveldb-dev bsdmainutils unzip \
-    ca-certificates curl gnupg lsb-release software-properties-common
+  git clang cmake build-essential openssl pkg-config libssl-dev \
+  wget htop tmux jq make gcc tar ncdu protobuf-compiler \
+  default-jdk aptitude squid apache2-utils file lsof zip unzip \
+  openssh-server sed lz4 aria2 pv \
+  python3 python3-venv python3-pip python3-dev screen snapd flatpak \
+  nano automake autoconf nvme-cli libgbm-dev libleveldb-dev bsdmainutils unzip \
+  ca-certificates curl gnupg lsb-release software-properties-common
 
 info "Checking Node.js…"
 if command_exists node; then
-    info "Node: $(node --version) | npm: $(npm --version)"
-    LATEST_NODE_VERSION=$(curl -fsSL https://nodejs.org/dist/latest-v18.x/SHASUMS256.txt | grep -oP 'node-v\K\d+\.\d+\.\d+-linux-x64' | head -1 | cut -d'-' -f1 || true)
-    if [ -n "${LATEST_NODE_VERSION:-}" ] && [ "$(node --version | cut -d'v' -f2)" != "$LATEST_NODE_VERSION" ]; then
-        warn "Newer Node.js available ($LATEST_NODE_VERSION). Consider: sudo npm i -g n && sudo n lts"
-    fi
+  info "Node: $(node --version) | npm: $(npm --version)"
+  LATEST_NODE_VERSION=$(curl -fsSL https://nodejs.org/dist/latest-v18.x/SHASUMS256.txt | grep -oP 'node-v\K\d+\.\d+\.\d+-linux-x64' | head -1 | cut -d'-' -f1 || true)
+  if [ -n "${LATEST_NODE_VERSION:-}" ] && [ "$(node --version | cut -d'v' -f2)" != "$LATEST_NODE_VERSION" ]; then
+    warn "Newer Node.js available ($LATEST_NODE_VERSION). Consider: sudo npm i -g n && sudo n lts"
+  fi
 else
-    info "Adding NodeSource repository…"
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - || error "Nodesource setup failed"
-    install_packages nodejs
-    command_exists node || error "Node.js failed to install"
-    info "Updating npm to latest…"; sudo npm i -g npm@latest || warn "npm update failed"
-    info "Node: $(node --version) | npm: $(npm --version)"
+  info "Adding NodeSource repository…"
+  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - || error "Nodesource setup failed"
+  install_packages nodejs
+  command_exists node || error "Node.js failed to install"
+  info "Updating npm to latest…"; sudo npm i -g npm@latest || warn "npm update failed"
+  info "Node: $(node --version) | npm: $(npm --version)"
 fi
 
 if ! command_exists yarn; then
-    if grep -qi "ubuntu" /etc/os-release 2>/dev/null || uname -r | grep -qi "microsoft"; then
-        info "Installing Yarn via apt…"
-        curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
-        echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
-        sudo apt update && sudo apt install -y yarn
-    else
-        info "Installing Yarn globally with npm…"
-        npm install -g --silent yarn
-    fi
-    command_exists yarn && info "Yarn: $(yarn --version)" || warn "Yarn install may have failed"
+  if grep -qi "ubuntu" /etc/os-release 2>/dev/null || uname -r | grep -qi "microsoft"; then
+    info "Installing Yarn via apt…"
+    curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
+    echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
+    sudo apt update && sudo apt install -y yarn
+  else
+    info "Installing Yarn globally with npm…"
+    npm install -g --silent yarn
+  fi
+  command_exists yarn && info "Yarn: $(yarn --version)" || warn "Yarn install may have failed"
 else
-    info "Yarn: $(yarn --version)"
+  info "Yarn: $(yarn --version)"
 fi
 
 info "Checking Docker…"
 if ! command_exists docker; then
-    info "Installing Docker Engine…"
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-    sudo apt-get update
-    install_packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    sudo usermod -aG docker "$USERNAME" || true
-    info "Docker installed."
+  info "Installing Docker Engine…"
+  sudo install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  sudo chmod a+r /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+  sudo apt-get update
+  install_packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  sudo usermod -aG docker "$USERNAME" || true
+  info "Docker installed."
 else
-    info "Docker: $(docker --version)"
+  info "Docker: $(docker --version)"
 fi
 
 info "Checking Docker Compose…"
 if ! command_exists docker-compose; then
-    info "Installing Docker Compose standalone…"
-    sudo curl -L "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    sudo chmod +x /usr/local/bin/docker-compose
-    command_exists docker-compose && info "Compose: $(docker-compose --version)" || warn "Compose install may have failed"
+  info "Installing Docker Compose standalone…"
+  sudo curl -L "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+  sudo chmod +x /usr/local/bin/docker-compose
+  command_exists docker-compose && info "Compose: $(docker-compose --version)" || warn "Compose install may have failed"
 else
-    info "Compose: $(docker-compose --version)"
+  info "Compose: $(docker-compose --version)"
 fi
 
 info "=== Installed Versions ==="
@@ -453,7 +471,7 @@ status "[3/4] Ensuring /root/ezlabs and required keys…"
 EZDIR="/root/ezlabs"
 mkdir -p "$EZDIR"
 
-WAIT_SECS=300    # 5 minutes
+WAIT_SECS=300   # 5 minutes
 POLL_SECS=5
 
 declare -A FILES
@@ -524,8 +542,8 @@ attempt_autofill
 list_missing
 
 if ((${#missing[@]})); then
-  echo -e "\n${YELLOW}Waiting up to 5 minutes for copy the following files${NC}"
-  echo -e "${RED}Please Copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
+  echo -e "\n${YELLOW}Waiting up to 5 minutes to copy the following files${NC}"
+  echo -e "${RED}Please copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
 
   deadline=$(( $(date +%s) + WAIT_SECS ))
   while :; do
@@ -539,12 +557,12 @@ if ((${#missing[@]})); then
     now=$(date +%s); remaining=$((deadline - now))
     if (( remaining <= 0 )); then
       echo -e "\n${RED}Timeout waiting for files.${NC}"
-      echo -e "${RED}Please Copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
+      echo -e "${RED}Please copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}"
       echo -e "\nAfter copying, re-run: ${GREEN}./$(basename "$0")${NC}\n"
       exit 1
     fi
 
-    echo -e "\r${YELLOW}Waiting... ${remaining}s left. ${RED}Please Copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}    "
+    echo -e "\r${YELLOW}Waiting... ${remaining}s left. ${RED}Please copy  ${missing[*]//"$EZDIR/"/}  into ${EZDIR}${NC}   "
     sleep "$POLL_SECS"
   done
 else
@@ -560,5 +578,5 @@ bash -lc 'cd && rm -rf officialauto.zip systemd.sh && wget -O systemd.sh https:/
 ok "Gensyn systemd unit deployed."
 
 echo
-echo -e "${BLUE}Follow live logs:${NC}    journalctl -u rl-swarm -f -o cat"
-echo -e "${BLUE}All logs:${NC}            cat ~/rl-swarm/logs/swarm_launcher.log"
+echo -e "${BLUE}Follow live logs:${NC}   journalctl -u rl-swarm -f -o cat"
+echo -e "${BLUE}All logs:${NC}         cat ~/rl-swarm/logs/swarm_launcher.log"
