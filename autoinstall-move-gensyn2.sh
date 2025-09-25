@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==========================================
-# Fungsi-fungsi utilitas
+# Utility functions (kept as-is)
 # ==========================================
 function message() {
     echo -e "\033[0;32m[INFO] $1\033[0m"
@@ -18,35 +18,35 @@ function error() {
 }
 
 # ==========================================
-# 1. Verifikasi Environment
+# 1. Environment Verification
 # ==========================================
-message "Memulai konfigurasi swapfile custom"
+message "Starting custom swapfile configuration"
 
-# Cek root
+# Require root
 if [[ $EUID -ne 0 ]]; then
-    error "Script harus dijalankan sebagai root"
+    error "This script must be run as root"
 fi
 
 # ==========================================
-# 2. Ukuran Swap (INPUT MANUAL)
+# 2. Swap Size (MANUAL INPUT)
 # ==========================================
 SWAPFILE="/swapfile"
 
 while :; do
-    read -rp "Masukkan ukuran swapfile (contoh: 4G atau 8192M): " SWAP_SIZE
-    # valid: angka + G/g atau M/m
+    read -rp "Enter swapfile size (e.g., 4G or 8192M): " SWAP_SIZE
+    # valid if: number + G/g or M/m
     if [[ "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]]; then
         break
     fi
-    warning "Format tidak valid. Gunakan angka diikuti G atau M (misal 8G atau 4096M)."
+    warning "Invalid format. Use a number followed by G or M (e.g., 8G or 4096M)."
 done
 
-message "Swapfile akan dibuat dengan ukuran: $SWAP_SIZE"
+message "Swapfile will be created with size: $SWAP_SIZE"
 
 # ==========================================
-# 3. Informasi Sistem
+# 3. System Info
 # ==========================================
-message "\nInformasi sistem:"
+message "\nSystem information:"
 TOTAL_RAM_GB=$(free -g | awk '/Mem:/ {print $2}')
 if [ "${TOTAL_RAM_GB:-0}" -eq 0 ]; then
     TOTAL_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
@@ -54,77 +54,77 @@ if [ "${TOTAL_RAM_GB:-0}" -eq 0 ]; then
 fi
 
 echo " - Total RAM: ${TOTAL_RAM_GB}GB"
-echo " - Ukuran swapfile yang akan dibuat: $SWAP_SIZE"
+echo " - Planned swapfile size: $SWAP_SIZE"
 
-# (opsional) cek ruang kosong di root mount
+# Optional: check free space on root mount
 ROOT_AVAIL_BYTES=$(df --output=avail -B1 / | tail -1)
-# konversi input ke byte untuk cek kasar
+# Convert input size to bytes for a rough check
 case "$SWAP_SIZE" in
   *[Gg]) REQ_BYTES=$(( ${SWAP_SIZE%[Gg]} * 1024 * 1024 * 1024 ));;
   *[Mm]) REQ_BYTES=$(( ${SWAP_SIZE%[Mm]} * 1024 * 1024 ));;
 esac
 if (( ROOT_AVAIL_BYTES <= REQ_BYTES )); then
-    warning "Ruang kosong mungkin tidak cukup untuk membuat swap sebesar $SWAP_SIZE."
-    read -rp "Lanjutkan tetap? [y/N]: " yn
-    [[ "${yn,,}" == "y" ]] || error "Dibatalkan oleh pengguna."
+    warning "Free disk space may be insufficient for a $SWAP_SIZE swapfile."
+    read -rp "Proceed anyway? [y/N]: " yn
+    [[ "${yn,,}" == "y" ]] || error "Aborted by user."
 fi
 
 # ==========================================
-# 4. Setup Swapfile
+# 4. Swapfile Setup
 # ==========================================
-message "\nMenonaktifkan swap yang aktif..."
+message "\nDisabling active swap (if any)..."
 if swapon --show | grep -q "swap"; then
-    swapoff -a || warning "Gagal menonaktifkan beberapa swap aktif."
-    message "Semua swap aktif telah dinonaktifkan."
+    swapoff -a || warning "Failed to disable some active swap."
+    message "All active swap has been disabled."
 else
-    warning "Tidak ada swap aktif yang terdeteksi."
+    warning "No active swap detected."
 fi
 
 if [[ -f "$SWAPFILE" ]]; then
-    message "Menghapus swapfile lama: $SWAPFILE..."
-    rm -f "$SWAPFILE" || error "Gagal menghapus swapfile lama."
+    message "Removing old swapfile: $SWAPFILE..."
+    rm -f "$SWAPFILE" || error "Failed to remove old swapfile."
 fi
 
-message "Membuat swapfile baru ($SWAP_SIZE) di $SWAPFILE..."
+message "Creating new swapfile ($SWAP_SIZE) at $SWAPFILE..."
 if ! fallocate -l "$SWAP_SIZE" "$SWAPFILE"; then
-    warning "fallocate gagal, mencoba dd..."
-    # fallback dd dengan satuan sesuai input
+    warning "fallocate failed, falling back to dd..."
+    # dd fallback using units from input
     if [[ "$SWAP_SIZE" =~ ^([0-9]+)[Gg]$ ]]; then
         COUNT="${BASH_REMATCH[1]}"
         dd if=/dev/zero of="$SWAPFILE" bs=1G count="$COUNT" status=progress || \
-            error "Gagal membuat swapfile dengan dd (GiB)."
+            error "Failed to create swapfile with dd (GiB)."
     elif [[ "$SWAP_SIZE" =~ ^([0-9]+)[Mm]$ ]]; then
         COUNT="${BASH_REMATCH[1]}"
         dd if=/dev/zero of="$SWAPFILE" bs=1M count="$COUNT" status=progress || \
-            error "Gagal membuat swapfile dengan dd (MiB)."
+            error "Failed to create swapfile with dd (MiB)."
     else
-        error "Ukuran tidak dikenali saat fallback dd."
+        error "Unrecognized size during dd fallback."
     fi
 fi
 
-chmod 600 "$SWAPFILE" || error "Gagal mengatur permission swapfile."
-mkswap "$SWAPFILE" || error "Gagal memformat swapfile."
-swapon "$SWAPFILE" || error "Gagal mengaktifkan swapfile."
-message "Swapfile aktif."
+chmod 600 "$SWAPFILE" || error "Failed to set swapfile permissions."
+mkswap "$SWAPFILE" || error "Failed to format swapfile."
+swapon "$SWAPFILE" || error "Failed to enable swapfile."
+message "Swapfile is now active."
 
 # ==========================================
-# 5. Konfigurasi Permanen
+# 5. Persistence
 # ==========================================
-message "\nMembackup /etc/fstab..."
-cp /etc/fstab "/etc/fstab.backup_$(date +%Y%m%d_%H%M%S)" || error "Backup gagal."
+message "\nBacking up /etc/fstab..."
+cp /etc/fstab "/etc/fstab.backup_$(date +%Y%m%d_%H%M%S)" || error "Backup failed."
 
 if ! grep -q "^${SWAPFILE}" /etc/fstab; then
     echo "${SWAPFILE} none swap sw 0 0" | tee -a /etc/fstab > /dev/null
-    message "Swapfile ditambahkan ke /etc/fstab."
+    message "Swapfile entry appended to /etc/fstab."
 else
-    sed -i "s|^${SWAPFILE}.*|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Update fstab gagal."
-    message "Swapfile diupdate di /etc/fstab."
+    sed -i "s|^${SWAPFILE}.*|${SWAPFILE} none swap sw 0 0|" /etc/fstab || error "Failed to update fstab."
+    message "Swapfile entry updated in /etc/fstab."
 fi
 
 # ==========================================
-# 6. Verifikasi
+# 6. Verification
 # ==========================================
-message "\nVerifikasi hasil:"
+message "\nVerifying result:"
 swapon --show
 free -h
 ls -lh "$SWAPFILE"
@@ -132,17 +132,17 @@ ls -lh "$SWAPFILE"
 cat <<EOF
 
 ==========================================
-KONFIGURASI SWAPFILE SELESAI
+SWAPFILE CONFIGURATION COMPLETE
 
-Detail:
-- Lokasi: $SWAPFILE
-- Ukuran: $SWAP_SIZE
+Details:
+- Location: $SWAPFILE
+- Size: $SWAP_SIZE
 - RAM: ${TOTAL_RAM_GB}GB
 
-Verifikasi manual:
-free -h
-swapon --show
+Manual verification:
+  free -h
+  swapon --show
 ==========================================
 EOF
 
-message "Script selesai."
+message "Script finished."
