@@ -63,7 +63,7 @@ fi
 SWAPFILE="/swapfile"
 
 while :; do
-    read -rp "Enter swapfile size (e.g., 4G or 8192M): " SWAP_SIZE
+    read -rp "Enter swapfile size (e.g: 50G ): " SWAP_SIZE
     # valid: number + G/g or M/m
     if [[ "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]]; then
         break
