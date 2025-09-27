@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Docker Engine + Compose (Ubuntu) — hardened, idempotent, CRLF self-heal
+# shellcheck shell=bash
 
-set -Eeuo pipefail
+# Pisah 'pipefail' agar tak error di shell yang tidak mendukung
+set -Eeuo
+
+# Aktifkan pipefail hanya jika tersedia
+if (set -o 2>/dev/null | grep -q '^pipefail'); then
+  set -o pipefail
+fi
 
 # ========== UI helpers ==========
 GREEN='\033[1;32m'; YELLOW='\033[1;33m'; RED='\033[1;31m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -126,3 +132,4 @@ info " - On WSL, ensure Docker service is managed by Docker Desktop or a suitabl
 #   sed -i 's/\r$//' install-docker.sh
 #   # atau
 #   apt-get install -y dos2unix && dos2unix install-docker.sh
+
