@@ -5,7 +5,7 @@ set -euo pipefail
 
 USERNAME=$(whoami)
 ARCH=$(uname -m)
-NODE_LTS_VERSION="20" # Target Node.js LTS major version (e.g., 20)
+NODE_LTS_VERSION="20" # Target Node.js LTS major version (e.g., 20, 22)
 
 function info() {
     echo -e "\033[1;32m[INFO] $1\033[0m"
@@ -43,7 +43,7 @@ if ! sudo -v; then
     error "This script requires sudo privileges."
 fi
 
-# Ensure curl is available, as it's used early
+# Ensure curl is available early, as it's used before the main install list
 if ! command_exists curl; then
     info "curl not found. Installing curl now..."
     sudo apt-get update
@@ -77,9 +77,10 @@ if command_exists node; then
     info "npm already installed: $CURRENT_NPM"
     
     # Simple check if current version matches the target major LTS
+    # This check is informational; it won't force an update.
     if [[ "$CURRENT_NODE" != v"$NODE_LTS_VERSION".* ]]; then
         warn "Installed Node.js version ($CURRENT_NODE) does not match target LTS v$NODE_LTS_VERSION."
-        info "To update, you may need to use a version manager (like nvm or fnm) or reinstall."
+        info "To update, you can reinstall or use a version manager (like nvm/fnm)."
     fi
 else
     info "Node.js not found. Setting up NodeSource repository for LTS v$NODE_LTS_VERSION..."
@@ -99,7 +100,7 @@ else
     info "Updating npm to latest version..."
     # Suppress the update output unless it fails
     if ! sudo npm install -g npm@latest &> /dev/null; then
-        warn "Failed to update npm to latest version. It may be due to permission settings."
+        warn "Failed to update npm to latest version. This is usually safe to ignore if Node.js is working."
     fi
     
     info "Node.js installed: $(node --version)"
@@ -112,19 +113,26 @@ if ! command_exists yarn; then
     if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
         info "Detected Ubuntu or WSL. Installing Yarn via apt using modern GPG method..."
         
-        # 1. Download and dearmor key
+        # 1. Download and dearmor key using the new, non-deprecated method
         YARN_KEYRING="/usr/share/keyrings/yarn-keyring.gpg"
-        curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | \
-            sudo gpg --dearmor -o "$YARN_KEYRING" || warn "Failed to create Yarn GPG keyring."
-            
-        # 2. Add repository with signed-by parameter
-        echo "deb [signed-by=$YARN_KEYRING] https://dl.yarnpkg.com/debian/ stable main" | \
-            sudo tee /etc/apt/sources.list.d/yarn.list > /dev/null || warn "Failed to add Yarn repository."
+        if ! curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo gpg --dearmor -o "$YARN_KEYRING" 2>/dev/null; then
+             warn "Failed to create Yarn GPG keyring. Attempting older method..."
+             # Fallback to the old method if the new one fails (e.g., in older environments)
+             curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
+             echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list > /dev/null
+        else
+            # 2. Add repository with signed-by parameter
+            echo "deb [signed-by=$YARN_KEYRING] https://dl.yarnpkg.com/debian/ stable main" | \
+                sudo tee /etc/apt/sources.list.d/yarn.list > /dev/null || warn "Failed to add Yarn repository."
+        fi
             
         sudo apt update && sudo apt install -y yarn
     else
         info "Yarn not found. Installing Yarn globally with npm..."
-        npm install -g --silent yarn
+        # Use --silent for cleaner output
+        if ! npm install -g --silent yarn; then
+            warn "npm install of yarn failed. Check global npm permissions."
+        fi
     fi
     
     if ! command_exists yarn; then
