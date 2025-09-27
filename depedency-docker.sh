@@ -127,9 +127,6 @@ info "Verifying installations..."
 
 # List installed versions
 info "=== Installed Versions ==="
-info "Node.js: $(node --version 2>/dev/null || echo 'Not installed')"
-info "npm: $(npm --version 2>/dev/null || echo 'Not installed')"
-info "Yarn: $(yarn --version 2>/dev/null || echo 'Not installed')"
 info "Docker: $(docker --version 2>/dev/null || echo 'Not installed')"
 info "Docker Compose: $(docker-compose --version 2>/dev/null || echo 'Not installed')"
 
