@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail  # More strict error handling
+set -euo pipefail
 
 # ==========================================
 # Configuration Variables
