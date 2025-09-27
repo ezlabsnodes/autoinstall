@@ -1,139 +1,149 @@
-#!/usr/bin/env bash
-# Docker Engine + Compose (Ubuntu) — hardened, idempotent, CRLF/self-shell self-heal
+#!/bin/bash
+set -euo pipefail
 
-# ========= Ensure we are using bash & LF =========
-# If the file has CRLF, convert to LF and re-exec
-if [ -n "${BASH_SOURCE[0]:-}" ] && [ -r "${BASH_SOURCE[0]}" ]; then
-  if grep -q $'\r' "${BASH_SOURCE[0]}"; then
-    printf '[WARN] CRLF detected — converting to LF and re-running…\n' >&2
-    _tmp="$(mktemp)"; tr -d '\r' < "${BASH_SOURCE[0]}" > "$_tmp"; chmod +x "$_tmp"
-    exec "$_tmp" "$@"
-  fi
+# --- Configuration & Utility Functions ---
+
+USERNAME=$(whoami)
+ARCH=$(uname -m)
+NODE_LTS_VERSION="20" # Target Node.js LTS major version (e.g., 20)
+
+function info() {
+    echo -e "\033[1;32m[INFO] $1\033[0m"
+}
+
+function warn() {
+    echo -e "\033[1;33m[WARN] $1\033[0m"
+}
+
+function error() {
+    echo -e "\033[1;31m[ERROR] $1\033[0m" >&2
+    exit 1
+}
+
+function install_packages() {
+    info "Installing packages: $*"
+    # Use DEBIAN_FRONTEND=noninteractive to suppress interactive prompts
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" || {
+        error "Failed to install packages: $*"
+    }
+}
+
+function command_exists() {
+    command -v "$1" &> /dev/null
+}
+
+# --- System Checks ---
+
+info "Checking system architecture..."
+if [ "$ARCH" != "x86_64" ]; then
+    warn "Non-x86_64 architecture detected ($ARCH). Some packages might need adjustment."
 fi
 
-# If not running under bash, re-exec with bash
-if [ -z "${BASH_VERSION:-}" ]; then
-  printf '[INFO] Re-running with bash…\n' >&2
-  exec bash "$0" "$@"
+if ! sudo -v; then
+    error "This script requires sudo privileges."
 fi
 
-# ========= Safe bash options (portable pipefail) =========
-set -Eeuo # no 'pipefail' yet
-# Enable pipefail only if supported (some shells/sh don’t have it)
-if (set -o 2>/dev/null | grep -q '^pipefail'); then
-  set -o pipefail
+# Ensure curl is available, as it's used early
+if ! command_exists curl; then
+    info "curl not found. Installing curl now..."
+    sudo apt-get update
+    install_packages curl
 fi
 
-# ========= UI helpers =========
-GREEN='\033[1;32m'; YELLOW='\033[1;33m'; RED='\033[1;31m'; BLUE='\033[0;34m'; NC='\033[0m'
-info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
-status(){ echo -e "\n${BLUE}>>> $*${NC}"; }
-trap 'error "Failed at line $LINENO"' ERR
+info "Updating system packages..."
+sudo apt-get update && sudo apt-get upgrade -y
+sudo apt-get autoremove -y
 
-# ========= Elevate to root =========
-if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-  info "Elevating to root with sudo…"
-  exec sudo -E bash "$0" "$@"
-fi
-export DEBIAN_FRONTEND=noninteractive
+# --- Package Installation ---
 
-# ========= Facts =========
-USERNAME=${SUDO_USER:-$(whoami)}
-ARCH=$(uname -m || echo unknown)
-OSREL="/etc/os-release"
-DISTRO=$(grep -E '^ID=' "$OSREL" 2>/dev/null | cut -d= -f2 | tr -d '"')
-CODENAME=$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}" || true)
-CODENAME=${CODENAME:-$(lsb_release -cs 2>/dev/null || echo "")}
-WSL=$([[ "$(uname -r || true)" =~ microsoft ]] && echo "yes" || echo "no")
+info "Installing essential build and development tools..."
+install_packages \
+    git clang cmake build-essential openssl pkg-config libssl-dev \
+    wget htop tmux jq make gcc tar ncdu protobuf-compiler \
+    default-jdk aptitude squid apache2-utils file lsof zip unzip \
+    iptables iptables-persistent openssh-server sed lz4 aria2 pv \
+    python3 python3-venv python3-pip python3-dev screen snapd flatpak \
+    nano automake autoconf nvme-cli libgbm-dev libleveldb-dev bsdmainutils unzip \
+    ca-certificates gnupg lsb-release software-properties-common
 
-status "Environment"
-info "User:     $USERNAME"
-info "Arch:     $ARCH"
-info "Distro:   ${DISTRO:-unknown}"
-info "Codename: ${CODENAME:-unknown}"
-info "WSL:      $WSL"
+# --- Node.js Installation ---
 
-if [[ -z "$CODENAME" ]]; then
-  error "Cannot determine Ubuntu codename (VERSION_CODENAME)."
-fi
-if [[ "$ARCH" != "x86_64" && "$ARCH" != "aarch64" ]]; then
-  warn "Non-standard arch detected ($ARCH). Binaries may differ."
-fi
+info "Checking Node.js installation (Targeting LTS v$NODE_LTS_VERSION)..."
 
-# ========= Helpers =========
-command_exists(){ command -v "$1" >/dev/null 2>&1; }
-
-# ========= System Update & base tools =========
-status "Update system packages"
-apt-get update -y
-apt-get upgrade -y
-apt-get autoremove -y || true
-
-apt-get install -y --no-install-recommends \
-  ca-certificates curl gnupg lsb-release software-properties-common
-
-# Optional but handy:
-apt-get install -y --no-install-recommends \
-  git build-essential wget jq tar
-
-# ========= Docker Installation =========
-status "Docker installation"
-
-if ! command_exists docker; then
-  info "Setting up Docker APT repository…"
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
-
-  echo \
-"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-${CODENAME} stable" \
-    > /etc/apt/sources.list.d/docker.list
-
-  apt-get update -y
-
-  info "Installing Docker Engine + CLI + containerd + Buildx + Compose plugin…"
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-  # Enable/restart service when available (skip on WSL)
-  if [[ "$WSL" != "yes" ]]; then
-    systemctl enable docker || warn "systemctl enable docker failed (OK on WSL/containers)."
-    systemctl restart docker || warn "systemctl restart docker failed (OK on WSL/containers)."
-  fi
-
-  # Add user to docker group
-  if ! id -nG "$USERNAME" | grep -qw docker; then
-    info "Adding user '$USERNAME' to 'docker' group…"
-    usermod -aG docker "$USERNAME" || warn "Failed to add '$USERNAME' to docker group."
-  fi
+if command_exists node; then
+    CURRENT_NODE=$(node --version)
+    CURRENT_NPM=$(npm --version)
+    info "Node.js already installed: $CURRENT_NODE"
+    info "npm already installed: $CURRENT_NPM"
+    
+    # Simple check if current version matches the target major LTS
+    if [[ "$CURRENT_NODE" != v"$NODE_LTS_VERSION".* ]]; then
+        warn "Installed Node.js version ($CURRENT_NODE) does not match target LTS v$NODE_LTS_VERSION."
+        info "To update, you may need to use a version manager (like nvm or fnm) or reinstall."
+    fi
 else
-  info "Docker already installed: $(docker --version)"
+    info "Node.js not found. Setting up NodeSource repository for LTS v$NODE_LTS_VERSION..."
+    
+    # Use the official NodeSource setup script for the target LTS version
+    NODE_SETUP_SCRIPT="setup_$NODE_LTS_VERSION.x"
+    if ! curl -fsSL "https://deb.nodesource.com/$NODE_SETUP_SCRIPT" | sudo -E bash -; then
+        error "Failed to set up NodeSource repository for v$NODE_LTS_VERSION"
+    fi
+    
+    install_packages nodejs
+
+    if ! command_exists node; then
+        error "Node.js installation failed"
+    fi
+    
+    info "Updating npm to latest version..."
+    # Suppress the update output unless it fails
+    if ! sudo npm install -g npm@latest &> /dev/null; then
+        warn "Failed to update npm to latest version. It may be due to permission settings."
+    fi
+    
+    info "Node.js installed: $(node --version)"
+    info "npm installed: $(npm --version)"
 fi
 
-# Ensure Compose plugin
-if docker compose version >/dev/null 2>&1; then
-  info "Docker Compose plugin: $(docker compose version | head -n1)"
+# --- Yarn Installation ---
+
+if ! command_exists yarn; then
+    if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
+        info "Detected Ubuntu or WSL. Installing Yarn via apt using modern GPG method..."
+        
+        # 1. Download and dearmor key
+        YARN_KEYRING="/usr/share/keyrings/yarn-keyring.gpg"
+        curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | \
+            sudo gpg --dearmor -o "$YARN_KEYRING" || warn "Failed to create Yarn GPG keyring."
+            
+        # 2. Add repository with signed-by parameter
+        echo "deb [signed-by=$YARN_KEYRING] https://dl.yarnpkg.com/debian/ stable main" | \
+            sudo tee /etc/apt/sources.list.d/yarn.list > /dev/null || warn "Failed to add Yarn repository."
+            
+        sudo apt update && sudo apt install -y yarn
+    else
+        info "Yarn not found. Installing Yarn globally with npm..."
+        npm install -g --silent yarn
+    fi
+    
+    if ! command_exists yarn; then
+        warn "Yarn installation might have failed."
+    else
+        info "Yarn installed: $(yarn --version)"
+    fi
 else
-  warn "Compose plugin missing — attempting install…"
-  apt-get install -y docker-compose-plugin || warn "Failed to install docker-compose-plugin."
+    info "Yarn already installed: $(yarn --version)"
 fi
 
-# ========= Final Report =========
-status "Installed versions"
-info "Docker:  $(docker --version 2>/dev/null || echo 'Not installed')"
-info "Compose: $(docker compose version 2>/dev/null | head -n1 || echo 'Not installed')"
+# --- Final Verification ---
 
-status "Next steps"
-info "Open a NEW shell or run: newgrp docker"
-info "On WSL, manage Docker service via Docker Desktop or suitable init."
+info "Verifying installations..."
 
-# ========= Notes =========
-# Jika melihat error: $'\r': command not found
-# -> file masih CRLF. Script ini sudah auto-perbaiki di awal.
-# Alternatif manual:
-#   sed -i 's/\r$//' install-docker.sh
-#   # atau:
-#   apt-get install -y dos2unix && dos2unix install-docker.sh
+info "=== Installed Versions ==="
+info "Node.js: $(node --version 2>/dev/null || echo 'Not installed')"
+info "npm: $(npm --version 2>/dev/null || echo 'Not installed')"
+info "Yarn: $(yarn --version 2>/dev/null || echo 'Not installed')"
+
+info "Installation completed successfully!"
+info "You may need to restart your shell or run 'exec \$SHELL' for changes to take effect."
