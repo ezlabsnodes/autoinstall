@@ -573,7 +573,7 @@ fi
 # STEP 4 — RUN GENSYN NODE (systemd launcher)
 # =========================================================
 status "[4/4] Starting Gensyn node via systemd.sh…"
-bash -lc 'cd && rm -rf officialauto.zip systemd.sh && wget -O systemd.sh https://raw.githubusercontent.com/ezlabsnodes/gensyn/main/systemd.sh && chmod +x systemd.sh && ./systemd.sh'
+bash -lc 'cd && rm -rf qwen2-5-1-5-b.zip systemd.sh && wget -O systemd.sh https://raw.githubusercontent.com/ezlabsnodes/gensyn/main/systemd.sh && chmod +x systemd.sh && ./systemd.sh'
 
 ok "Gensyn systemd unit deployed."
 
