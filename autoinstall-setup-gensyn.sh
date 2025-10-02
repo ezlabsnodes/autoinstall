@@ -453,8 +453,8 @@ cd "$HOME"
 rm -rf rl-swarm
 
 # Download and Unzip officialauto.zip, then change to rl-swarm directory
-wget -q https://github.com/ezlabsnodes/gensyn/raw/refs/heads/main/officialauto.zip -O "$HOME/officialauto.zip" && \
-unzip -o "$HOME/officialauto.zip" -d "$HOME" >/dev/null && \
+wget -q https://github.com/ezlabsnodes/gensyn/raw/refs/heads/main/officialauto.zip -O "$HOME/qwen2-5-1-5-b.zip" && \
+unzip -o "$HOME/qwen2-5-1-5-b.zip" -d "$HOME" >/dev/null && \
 cd "$HOME/rl-swarm"
 
 # Copy swarm.pem to $HOME/rl-swarm/
@@ -464,7 +464,7 @@ cd "$HOME/rl-swarm"
 python3 -m venv .venv
 source .venv/bin/activate
 chmod +x run_rl_swarm.sh
-screen -S gensyn -dm bash -c "source .venv/bin/activate && CPU_ONLY=true ./run_rl_swarm.sh"
+screen -S gensyn -dm bash -c "source .venv/bin/activate && ./run_rl_swarm.sh"
 
 echo "Script completed. The '\''gensyn'\'' screen session should be running in the background."
 echo "Check logs : tail -f $HOME/rl-swarm/logs/swarm_launcher.log"
