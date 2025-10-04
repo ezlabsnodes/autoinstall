@@ -169,7 +169,7 @@ export PATH="$PATH:$AZTEC_HOME/.aztec/bin"
 
 # Ensure aztec-up exists, then upgrade to the requested version
 if [ -x "$AZTEC_BIN/aztec-up" ]; then
-  "$AZTEC_BIN/aztec-up" -v 2.0.2
+  "$AZTEC_BIN/aztec-up" -v 2.0.3
 else
   red "aztec-up not found in $AZTEC_BIN"; exit 1
 fi
@@ -228,7 +228,7 @@ cat > docker-compose.yml <<'YAML'
 services:
   aztec-node:
     container_name: aztec-sequencer
-    image: aztecprotocol/aztec:2.0.2
+    image: aztecprotocol/aztec:2.0.3
     restart: unless-stopped
     environment:
       ETHEREUM_HOSTS: ${ETHEREUM_RPC_URL}
