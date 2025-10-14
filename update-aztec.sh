@@ -4,7 +4,7 @@
 AZTEC_DIR="/root/aztec"
 ENV_FILE="$AZTEC_DIR/.env"
 COMPOSE_FILE="$AZTEC_DIR/docker-compose.yml"
-COMPOSE_CMD="docker-compose" # Ganti ke "docker compose" jika Anda menggunakan Docker versi baru
+COMPOSE_CMD="docker compose"
 CONTAINER_NAME="aztec-sequencer"
 NEW_GOVERNANCE_PAYLOAD="0x9D8869D17Af6B899AFf1d93F23f863FF41ddc4fa"
 
