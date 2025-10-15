@@ -187,7 +187,8 @@ CONSENSUS_BEACON_URL=${CONSENSUS_BEACON_URL}
 VALIDATOR_PRIVATE_KEYS=${VALIDATOR_PRIVATE_KEYS}
 COINBASE=${COINBASE}
 P2P_IP=${P2P_IP}
-GOVERNANCE_PAYLOAD=0x54F7fe24E349993b363A5Fa1bccdAe2589D5E5Ef
+GOVERNANCE_PAYLOAD=0x9D8869D17Af6B899AFf1d93F23f863FF41ddc4fa
+AZTEC_ADMIN_PORT=8880
 EOF
 
 # Write docker-compose.yml file
@@ -206,6 +207,7 @@ services:
       COINBASE: \${COINBASE}
       P2P_IP: \${P2P_IP}
       GOVERNANCE_PAYLOAD: \${GOVERNANCE_PAYLOAD}
+      AZTEC_ADMIN_PORT: ${AZTEC_ADMIN_PORT}
       LOG_LEVEL: info
     entrypoint: >
       sh -c "node --no-warnings /usr/src/yarn-project/aztec/dest/bin/index.js start
@@ -218,6 +220,7 @@ services:
       - "40400:40400/tcp"
       - "40400:40400/udp"
       - "8080:8080"
+      - "8880:8880"
     volumes:
       - "${HOME_DIR}/.aztec/testnet/data/:/data"
 YAML
