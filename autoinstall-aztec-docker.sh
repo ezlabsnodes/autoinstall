@@ -207,7 +207,7 @@ services:
       COINBASE: \${COINBASE}
       P2P_IP: \${P2P_IP}
       GOVERNANCE_PAYLOAD: \${GOVERNANCE_PAYLOAD}
-      AZTEC_ADMIN_PORT: ${AZTEC_ADMIN_PORT}
+      AZTEC_ADMIN_PORT: \${AZTEC_ADMIN_PORT}
       LOG_LEVEL: info
     entrypoint: >
       sh -c "node --no-warnings /usr/src/yarn-project/aztec/dest/bin/index.js start
