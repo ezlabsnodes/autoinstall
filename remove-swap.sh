@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# ==============================================
-# AUTO REMOVE SWAP LAMA (TANPA KONFIRMASI)
-# ==============================================
-
 # Cek swap aktif
 SWAP_FILE=$(swapon --show=NAME --noheadings | head -n1)
 
