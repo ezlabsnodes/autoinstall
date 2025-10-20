@@ -281,8 +281,8 @@ services:
     network_mode: host
     restart: unless-stopped
     volumes:
-      - /var/ethereum/execution:/data
-      - /var/ethereum/jwt.hex:/data/jwt.hex
+      - /root/ethereum/execution:/data
+      - /root/ethereum/jwt.hex:/data/jwt.hex
     command:
       - --sepolia
       - --http
@@ -306,8 +306,8 @@ services:
     network_mode: host
     restart: unless-stopped
     volumes:
-      - /var/ethereum/consensus:/data
-      - /var/ethereum/jwt.hex:/data/jwt.hex
+      - /root/ethereum/consensus:/data
+      - /root/ethereum/jwt.hex:/data/jwt.hex
     depends_on:
       - geth
     command:
