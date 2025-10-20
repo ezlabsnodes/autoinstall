@@ -276,23 +276,17 @@ green "[4/5] Writing /root/ethereum/docker-compose.yml…"
 cat >/root/ethereum/docker-compose.yml <<'YAML'
 services:
   geth:
-    image: ethereum/client-go:stable
+    image: ethereum/client-go:latest
     container_name: geth
     network_mode: host
     restart: unless-stopped
-    ports:
-      - 30303:30303
-      - 30303:30303/udp
-      - 8545:8545
-      - 8546:8546
-      - 8551:8551
     volumes:
-      - /root/ethereum/execution:/data
-      - /root/ethereum/jwt.hex:/data/jwt.hex
+      - /var/ethereum/execution:/data
+      - /var/ethereum/jwt.hex:/data/jwt.hex
     command:
       - --sepolia
       - --http
-      - --http.api=eth,net,web3
+      - --http.api=eth,net,web3,engine,admin
       - --http.addr=0.0.0.0
       - --authrpc.addr=0.0.0.0
       - --authrpc.vhosts=*
@@ -307,18 +301,15 @@ services:
         max-file: "3"
 
   prysm:
-    image: gcr.io/prysmaticlabs/prysm/beacon-chain
+    image: gcr.io/prysmaticlabs/prysm/beacon-chain:v6.1.2
     container_name: prysm
     network_mode: host
     restart: unless-stopped
     volumes:
-      - /root/ethereum/consensus:/data
-      - /root/ethereum/jwt.hex:/data/jwt.hex
+      - /var/ethereum/consensus:/data
+      - /var/ethereum/jwt.hex:/data/jwt.hex
     depends_on:
       - geth
-    ports:
-      - 4000:4000
-      - 3500:3500
     command:
       - --sepolia
       - --accept-terms-of-use
@@ -327,13 +318,12 @@ services:
       - --rpc-host=0.0.0.0
       - --execution-endpoint=http://127.0.0.1:8551
       - --jwt-secret=/data/jwt.hex
-      - --rpc-port=4000
       - --grpc-gateway-corsdomain=*
       - --grpc-gateway-host=0.0.0.0
       - --grpc-gateway-port=3500
-      - --min-sync-peers=3
       - --checkpoint-sync-url=https://checkpoint-sync.sepolia.ethpandaops.io
       - --genesis-beacon-api-url=https://checkpoint-sync.sepolia.ethpandaops.io
+      - --subscribe-all-data-subnets
     logging:
       driver: "json-file"
       options:
