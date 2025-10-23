@@ -573,7 +573,7 @@ fi
 # STEP 4 — RUN GENSYN NODE (systemd launcher)
 # =========================================================
 status "[4/4] Starting Gensyn node via screen"
-screen -S gensyn -dm bash -c "python3 -m venv .venv && source .venv/bin/activate && chmod +x run_rl_swarm.sh && CPU_ONLY=true ./run_rl_swarm.sh"
+screen -S gensyn -dm bash -c "python3 -m venv .venv && source .venv/bin/activate && chmod +x run_rl_swarm.sh && ./run_rl_swarm.sh"
 
 ok "Gensyn Has started"
 
