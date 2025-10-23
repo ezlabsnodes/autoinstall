@@ -572,11 +572,10 @@ fi
 # =========================================================
 # STEP 4 — RUN GENSYN NODE (systemd launcher)
 # =========================================================
-status "[4/4] Starting Gensyn node via systemd.sh…"
-bash -lc 'cd && rm -rf qwen2-5-1-5-b.zip systemd.sh && wget -O systemd.sh https://raw.githubusercontent.com/ezlabsnodes/gensyn/main/systemd.sh && chmod +x systemd.sh && ./systemd.sh'
+status "[4/4] Starting Gensyn node via screen"
+screen -S gensyn -dm bash -c "python3 -m venv .venv && source .venv/bin/activate && chmod +x run_rl_swarm.sh && CPU_ONLY=true ./run_rl_swarm.sh"
 
-ok "Gensyn systemd unit deployed."
+ok "Gensyn Has started"
 
 echo
-echo -e "${BLUE}Follow live logs:${NC}   journalctl -u rl-swarm -f -o cat"
-echo -e "${BLUE}All logs:${NC}         cat ~/rl-swarm/logs/swarm_launcher.log"
+echo -e "${BLUE}Open Yur Screen:${NC}   screen -r gensyn"
