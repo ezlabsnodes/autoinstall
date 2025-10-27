@@ -215,6 +215,7 @@ services:
       --node
       --archiver
       --sequencer
+      --snapshots-url https://snapshots.aztec.graphops.xyz/files
       --port 8080"
     ports:
       - "40400:40400/tcp"
