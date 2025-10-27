@@ -1,80 +1,98 @@
 #!/bin/bash
 
-# --- Konfigurasi ---
+# --- Configuration ---
 AZTEC_DIR="/root/aztec"
 ENV_FILE="$AZTEC_DIR/.env"
 COMPOSE_FILE="$AZTEC_DIR/docker-compose.yml"
 COMPOSE_CMD="docker compose"
 CONTAINER_NAME="aztec-sequencer"
-NEW_GOVERNANCE_PAYLOAD="0x9D8869D17Af6B899AFf1d93F23f863FF41ddc4fa"
+NEW_GOVERNANCE_PAYLOAD="0xDCd9DdeAbEF70108cE02576df1eB333c4244C666"
 
-echo "### Memulai skrip pembaruan Aztec Node ###"
+echo "### Starting Aztec Node Update Script ###"
 
-# --- 1. Memperbarui file .env ---
-echo "-> Memperbarui file $ENV_FILE..."
+# --- 1. Update .env file ---
+echo "-> Updating $ENV_FILE file..."
 if [ ! -f "$ENV_FILE" ]; then
-    echo "ERROR: File $ENV_FILE tidak ditemukan!"
+    echo "ERROR: $ENV_FILE file not found!"
     exit 1
 fi
-# Mengubah nilai GOVERNANCE_PAYLOAD
+# Update GOVERNANCE_PAYLOAD value
 sed -i "s/^GOVERNANCE_PAYLOAD=.*/GOVERNANCE_PAYLOAD=$NEW_GOVERNANCE_PAYLOAD/" "$ENV_FILE"
-echo "   - Nilai GOVERNANCE_PAYLOAD diubah."
-# Menambahkan AZTEC_ADMIN_PORT jika belum ada
+echo "   - GOVERNANCE_PAYLOAD value updated."
+# Add AZTEC_ADMIN_PORT if not exists
 if ! grep -q "^AZTEC_ADMIN_PORT=" "$ENV_FILE"; then
     echo "AZTEC_ADMIN_PORT=8880" >> "$ENV_FILE"
-    echo "   + Menambahkan AZTEC_ADMIN_PORT=8880."
+    echo "   + Added AZTEC_ADMIN_PORT=8880."
 fi
-echo "-> File .env berhasil diperbarui."
+echo "-> .env file successfully updated."
 echo ""
 
-# --- 2. Memperbarui file docker-compose.yml ---
-echo "-> Memperbarui file $COMPOSE_FILE..."
+# --- 2. Update docker-compose.yml file ---
+echo "-> Updating $COMPOSE_FILE file..."
 if [ ! -f "$COMPOSE_FILE" ]; then
-    echo "ERROR: File $COMPOSE_FILE tidak ditemukan!"
+    echo "ERROR: $COMPOSE_FILE file not found!"
     exit 1
 fi
 
-# Menambahkan AZTEC_ADMIN_PORT ke environment jika belum ada
+# Add AZTEC_ADMIN_PORT to environment if not exists
 if ! grep -q "AZTEC_ADMIN_PORT: \${AZTEC_ADMIN_PORT}" "$COMPOSE_FILE"; then
-    # Menambahkan setelah baris LOG_LEVEL: info
+    # Add after LOG_LEVEL: info line
     sed -i '/LOG_LEVEL: info/a \      AZTEC_ADMIN_PORT: ${AZTEC_ADMIN_PORT}' "$COMPOSE_FILE"
-    echo "   + Menambahkan AZTEC_ADMIN_PORT di bawah environment."
+    echo "   + Added AZTEC_ADMIN_PORT to environment."
 else
-    echo "   - AZTEC_ADMIN_PORT sudah ada di environment."
+    echo "   - AZTEC_ADMIN_PORT already exists in environment."
 fi
 
-# Menambahkan port admin 8880 jika belum ada
+# Add admin port 8880 if not exists
 if ! grep -q -- "- 8880:8880" "$COMPOSE_FILE"; then
     sed -i '/- 8080:8080/a \      - 8880:8880' "$COMPOSE_FILE"
-    echo "   + Menambahkan port 8880:8880."
+    echo "   + Added port 8880:8880."
 else
-    echo "   - Port 8880:8880 sudah ada."
+    echo "   - Port 8880:8880 already exists."
 fi
 
-echo "-> File docker-compose.yml berhasil diperbarui."
+echo "-> docker-compose.yml file successfully updated."
 echo ""
 
-# --- 3. Menghentikan dan Menghapus Kontainer Lama ---
-echo "-> Menghentikan dan menghapus kontainer '$CONTAINER_NAME'..."
+# --- 3. Stop and Remove Old Container ---
+echo "-> Stopping and removing container '$CONTAINER_NAME'..."
 if sudo docker ps -a --format '{{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
     sudo docker stop $CONTAINER_NAME
     sudo docker rm -f $CONTAINER_NAME
-    echo "-> Kontainer lama berhasil dihapus."
+    echo "-> Old container successfully removed."
 else
-    echo "-> Kontainer '$CONTAINER_NAME' tidak ditemukan, melanjutkan..."
+    echo "-> Container '$CONTAINER_NAME' not found, continuing..."
 fi
 echo ""
 
-# --- 4. Menjalankan Ulang Kontainer ---
-echo "-> Menjalankan ulang kontainer dengan konfigurasi baru..."
-cd "$AZTEC_DIR" || { echo "ERROR: Tidak dapat masuk ke direktori $AZTEC_DIR"; exit 1; }
+# --- 4. Update to version 2.0.4 ---
+echo "-> Updating to version 2.0.4..."
+echo "-> Cleaning up old data directories..."
+
+# Remove testnet data
+rm -rf .aztec/testnet/data
+echo "   - Removed .aztec/testnet/data"
+
+# Remove temporary world state files
+rm -rf /tmp/aztec-world-state-*
+echo "   - Removed /tmp/aztec-world-state-* files"
+
+# Update to version 2.0.4
+echo "-> Running aztec-up to version 2.0.4..."
+aztec-up -v 2.0.4
+echo "-> Version update completed."
+echo ""
+
+# --- 5. Restart Container ---
+echo "-> Restarting container with new configuration..."
+cd "$AZTEC_DIR" || { echo "ERROR: Cannot enter directory $AZTEC_DIR"; exit 1; }
 $COMPOSE_CMD up -d
-echo "-> Kontainer berhasil dijalankan. Menunggu 15 detik agar node siap..."
+echo "-> Container successfully started. Waiting 15 seconds for node to be ready..."
 sleep 15
 echo ""
 
-# --- 5. Mengirim Konfigurasi Baru melalui RPC ---
-echo "-> Mengirim pembaruan konfigurasi governance payload melalui cURL..."
+# --- 6. Send New Configuration via RPC ---
+echo "-> Sending governance payload configuration update via cURL..."
 curl -X POST http://localhost:8880 \
   -H 'Content-Type: application/json' \
   -d '{
@@ -84,5 +102,5 @@ curl -X POST http://localhost:8880 \
     "id":1
   }'
 
-echo -e "\n\n### Skrip Selesai ###"
-echo "Node Aztec Anda telah berhasil diperbarui dan dikonfigurasi ulang. ✅"
+echo -e "\n\n### Script Completed ###"
+echo "Your Aztec Node has been successfully updated and reconfigured. ✅"
