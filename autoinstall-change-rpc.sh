@@ -29,7 +29,7 @@ echo "Current CONSENSUS_BEACON_URL : ${CURR_CONS:-<not set>}"
 echo
 
 # ---------- Prompt input ----------
-read -rp "New ETHEREUM_RPC_URL (required): " NEW_EXEC
+read -rp "New ETHEREUM_RPC_URL : " NEW_EXEC
 [ -n "$NEW_EXEC" ] || { err "ETHEREUM_RPC_URL must not be empty."; exit 1; }
 
 read -rp "New CONSENSUS_BEACON_URL : " NEW_CONS || true
