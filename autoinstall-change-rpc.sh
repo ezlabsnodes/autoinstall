@@ -32,7 +32,7 @@ echo
 read -rp "New ETHEREUM_RPC_URL (required): " NEW_EXEC
 [ -n "$NEW_EXEC" ] || { err "ETHEREUM_RPC_URL must not be empty."; exit 1; }
 
-read -rp "New CONSENSUS_BEACON_URL (optional, ENTER to keep current): " NEW_CONS || true
+read -rp "New CONSENSUS_BEACON_URL : " NEW_CONS || true
 
 # ---------- Helper to replace or add key ----------
 replace_or_add () {
