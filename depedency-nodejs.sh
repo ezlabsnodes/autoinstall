@@ -3,6 +3,7 @@ set -euo pipefail
 
 USERNAME=$(whoami)
 ARCH=$(uname -m)
+REQUIRED_NODE_MAJOR=20
 
 function info() {
     echo -e "\033[1;32m[INFO] $1\033[0m"
@@ -53,52 +54,62 @@ install_packages \
 
 info "Checking Node.js installation..."
 
+CURRENT_NODE_MAJOR=0
 if command_exists node; then
     CURRENT_NODE=$(node --version)
-    CURRENT_NPM=$(npm --version)
-    info "Node.js already installed: $CURRENT_NODE"
-    info "npm already installed: $CURRENT_NPM"
-    
-    info "Checking for Node.js updates..."
-    LATEST_NODE_VERSION=$(curl -fsSL https://nodejs.org/dist/latest-v18.x/SHASUMS256.txt | grep -oP 'node-v\K\d+\.\d+\.\d+-linux-x64' | head -1 | cut -d'-' -f1)
-    if [ "$(node --version | cut -d'v' -f2)" != "$LATEST_NODE_VERSION" ]; then
-        warn "Newer Node.js version available ($LATEST_NODE_VERSION)"
-        info "Consider updating using:"
-        info "  sudo npm install -g n"
-        info "  sudo n lts"
+    CURRENT_NODE_MAJOR=$(echo "$CURRENT_NODE" | sed 's/v//' | cut -d'.' -f1)
+    info "Node.js currently installed: $CURRENT_NODE"
+
+    if [ "$CURRENT_NODE_MAJOR" -lt "$REQUIRED_NODE_MAJOR" ]; then
+        warn "Node.js version is too old (< $REQUIRED_NODE_MAJOR.x), removing old version..."
+        # Hapus Node.js yang diinstall via apt
+        sudo apt-get remove -y nodejs || true
+        sudo apt-get purge -y nodejs || true
+
+        # Bersihkan kemungkinan instalasi manual
+        sudo rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx || true
+        sudo rm -rf /usr/local/lib/node_modules || true
+
+        CURRENT_NODE_MAJOR=0
+    else
+        info "Existing Node.js version already >= $REQUIRED_NODE_MAJOR.x, keeping it."
     fi
-else
-    info "Adding NodeSource repository..."
-    if ! curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -; then
-        error "Failed to set up NodeSource repository"
+fi
+
+if ! command_exists node || [ "$CURRENT_NODE_MAJOR" -lt "$REQUIRED_NODE_MAJOR" ]; then
+    info "Installing Node.js v$REQUIRED_NODE_MAJOR.x from NodeSource..."
+
+    if ! curl -fsSL "https://deb.nodesource.com/setup_${REQUIRED_NODE_MAJOR}.x" | sudo -E bash -; then
+        error "Failed to set up NodeSource repository for Node.js $REQUIRED_NODE_MAJOR.x"
     fi
-    
+
     install_packages nodejs
 
     if ! command_exists node; then
         error "Node.js installation failed"
     fi
-    
+
     info "Updating npm to latest version..."
     if ! sudo npm install -g npm@latest; then
         warn "Failed to update npm to latest version"
     fi
-    
-    info "Node.js installed: $(node --version)"
-    info "npm installed: $(npm --version)"
 fi
 
+info "Node.js installed: $(node --version)"
+info "npm installed: $(npm --version)"
+
+# ---- Yarn ----
 if ! command_exists yarn; then
     if grep -qi "ubuntu" /etc/os-release 2> /dev/null || uname -r | grep -qi "microsoft"; then
         info "Detected Ubuntu or WSL Ubuntu. Installing Yarn via apt..."
         curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
         echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
-        sudo apt update && sudo apt install -y yarn
+        sudo apt-get update && sudo apt-get install -y yarn
     else
         info "Yarn not found. Installing Yarn globally with npm..."
         npm install -g --silent yarn
     fi
-    
+
     if ! command_exists yarn; then
         warn "Yarn installation might have failed"
     else
