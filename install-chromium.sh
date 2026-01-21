@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # Color codes for different messages
@@ -47,7 +46,7 @@ is_port_in_use() {
 # Function to create a Chromium container
 create_chromium_container() {
   #FETCH IP
-  PUBLIC_IP=$(curl https://api.ipify.org)
+  PUBLIC_IP=$(curl -s https://api.ipify.org)
 
   # Prompt the user for inputs
   read -p "Enter your chromium Name: " ACno
@@ -55,6 +54,7 @@ create_chromium_container() {
   # Prompt for a username, password, and proxy
   read -p "Enter CUSTOM_USER (username): " custom_user
   read -s -p "Enter PASSWORD: " password
+  echo ""
   echo -e "${YELLOW} proxy format : http://user:password@ip:port${NC}"
   read -p "Enter proxy: " proxy
 
@@ -73,8 +73,13 @@ create_chromium_container() {
     if [ $? -ne 0 ]; then
       port1=$port
       port2=$((port1 + 1))  # Calculate port2 automatically
-      port_found=true
-      break
+      
+      # Double check port2 availability
+      is_port_in_use $port2
+      if [ $? -ne 0 ]; then
+          port_found=true
+          break
+      fi
     fi
   done
 
@@ -85,12 +90,14 @@ create_chromium_container() {
   fi
 
    # Create Docker container
+   # ADDED: --security-opt seccomp=unconfined (Fixes blank screen/crash)
+   # UPDATED: --shm-size to 2gb (Better stability)
     docker run -d \
         --name "Chromium$ACno" \
+        --security-opt seccomp=unconfined \
         -e http_proxy="$proxy" \
         -e https_proxy="$proxy" \
         -e TITLE="Chromium$ACno" \
-        -e DISPLAY=":1" \
         -e PUID=1000 \
         -e PGID=1000 \
         -e CUSTOM_USER="$custom_user" \
@@ -99,16 +106,22 @@ create_chromium_container() {
         -v "$HOME/chromium/config$ACno:/config" \
         -p "$port1:3000" \
         -p "$port2:3001" \
-        --shm-size="1gb" \
+        --shm-size="2gb" \
         --restart unless-stopped \
         lscr.io/linuxserver/chromium:latest
 
   # Print confirmation message
-  echo -e "${YELLOW}Chromium$ACno is started. Login with this link: http://$PUBLIC_IP:$port1/${NC}"
-  echo -e "${YELLOW}Your: $custom_user and Password: $password for authentication${NC}"
+  echo -e "${GREEN}-----------------------------------------------------${NC}"
+  echo -e "${GREEN}Chromium$ACno is started successfully!${NC}"
+  echo -e "${YELLOW}Username: $custom_user${NC}"
+  echo -e "${YELLOW}Password: $password${NC}"
   echo -e "${YELLOW}User-Agent: $user_agent${NC}"
-
-  echo -e "${YELLOW} Your Chromium$ACno is created successfully..${NC}"
+  echo -e "${GREEN}-----------------------------------------------------${NC}"
+  echo -e "ACCESS LINKS:"
+  echo -e "HTTP  (Standard): http://$PUBLIC_IP:$port1/"
+  echo -e "HTTPS (Secure)  : https://$PUBLIC_IP:$port2/  <-- ${CYAN}RECOMMENDED (Use this to fix error)${NC}"
+  echo -e "${GREEN}-----------------------------------------------------${NC}"
+  echo -e "${CYAN}Note: If using HTTPS, accept the security warning in your browser.${NC}"
 }
 
 # Main script loop
