@@ -1,0 +1,119 @@
+import requests
+import time
+
+RDP_IP = ""
+TEST_URL = "http://ipinfo.io/json"
+
+START_PORT = 60000
+END_PORT = 60001
+
+PORT_CONFIGS = {
+    60000: {"state": "Alabama", "city": "Alabaster", "zip": "35007"},
+    60001: {"state": "Alabama", "city": "Alabaster", "zip": "35007"},
+    60002: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60003: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60004: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60005: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60006: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60007: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60008: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60009: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60010: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60011: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60012: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60013: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60014: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60015: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60016: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60017: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60018: {"state": "Alaska", "city": "Abilene", "zip": "+1876"},
+    60019: {"state": "Alaska", "city": "Abilene", "zip": "+1876"}
+}
+
+def get_proxies(port):
+    proxy_str = f"socks5h://{RDP_IP}:{port}"
+    return {
+        "http": proxy_str,
+        "https": proxy_str,
+    }
+
+def cek_koneksi(port, config):
+    print(f"[LOG] Mengecek Port {port}...", end=" ")
+    try:
+        response = requests.get(TEST_URL, proxies=get_proxies(port), timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"-> [OK] IP: {data.get('ip')} | Lokasi: {data.get('city')}, {data.get('region')}")
+            return True
+        else:
+            print(f"-> [WARN] Status Code: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"-> [DEAD] Gagal: {e}")
+        return False
+
+def buat_proxy_baru(port, config):
+    print(f"   [ACTION] Request Port {port} (City: {config['city']}, State: {config['state']}, ZIP: {config['zip']})...")
+    
+    base_url = f"http://{RDP_IP}:50000/api/proxy"
+    
+    params = {
+        "t": 2,
+        "num": 1,
+        "port": port,
+        "country": "US",
+        "state": config["state"],
+        "city": config["city"],
+        "zip": config["zip"]
+    }
+    
+    try:
+        resp = requests.get(base_url, params=params, timeout=10)
+        
+        try:
+            data = resp.json()
+            
+            if data.get("error") is True or str(data.get("message")).lower() != "success":
+                pesan_error = data.get("message", resp.text)
+                print(f"   [API GAGAL/HABIS] {pesan_error}")
+                print(f"   [SKIP] Melewati port {port} dan lanjut ke port berikutnya.")
+                return False
+            else:
+                print(f"   [API SUKSES] Berhasil mendapatkan proxy baru!")
+                return True
+                
+        except ValueError:
+            print(f"   [API ERROR] Respon tidak dikenali: {resp.text}")
+            print(f"   [SKIP] Melewati port {port}...")
+            return False
+            
+    except Exception as e:
+        print(f"   [ERROR] Gagal hit API RDP: {e}")
+        print(f"   [SKIP] Melewati port {port}...")
+        return False
+
+print(f"=== BOT AUTO PROXY CUSTOM PER-PORT ({START_PORT} - {END_PORT}) STARTED ===")
+
+while True:
+    print("\n" + "="*60)
+    print(f"MEMULAI PENGECEKAN (Waktu: {time.strftime('%H:%M:%S')})")
+    print("="*60)
+
+    for port in range(START_PORT, END_PORT + 1):
+        config = PORT_CONFIGS.get(port)
+        
+        if not config:
+            print(f"[SKIP] Port {port} tidak ada di database konfigurasi.")
+            continue
+            
+        is_alive = cek_koneksi(port, config)
+        
+        if not is_alive:
+            buat_proxy_baru(port, config)
+            time.sleep(1) 
+
+    print("\n>> Semua port aktif sudah dicek.")
+    print(">> Menunggu 1 menit (60 detik) untuk siklus berikutnya...")
+    time.sleep(60)
