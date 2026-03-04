@@ -4,6 +4,9 @@ import time
 RDP_IP = ""
 TEST_URL = "http://ipinfo.io/json"
 
+PROXY_USER = "123"
+PROXY_PASS = "123"
+
 START_PORT = 60000
 END_PORT = 60001
 
@@ -31,28 +34,37 @@ PORT_CONFIGS = {
 }
 
 def get_proxies(port):
-    proxy_str = f"http://{RDP_IP}:{port}"
+    proxy_str = f"http://{PROXY_USER}:{PROXY_PASS}@{RDP_IP}:{port}"
     return {
         "http": proxy_str,
         "https": proxy_str,
     }
 
 def cek_koneksi(port, config):
-    print(f"[LOG] Mengecek Port {port}...", end=" ")
-    try:
-        response = requests.get(TEST_URL, proxies=get_proxies(port), timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            print(f"-> [OK] IP: {data.get('ip')} | Lokasi: {data.get('city')}, {data.get('region')}")
-            return True
-        else:
-            print(f"-> [WARN] Status Code: {response.status_code}")
-            return False
+    max_retries = 3
+    
+    for attempt in range(1, max_retries + 1):
+        print(f"[LOG] Mengecek Port {port} (Percobaan {attempt}/{max_retries})...", end=" ")
+        try:
+            response = requests.get(TEST_URL, proxies=get_proxies(port), timeout=180)
             
-    except Exception as e:
-        print(f"-> [DEAD] Gagal: {e}")
-        return False
+            if response.status_code == 200:
+                data = response.json()
+                print(f"-> [OK] IP: {data.get('ip')} | Lokasi: {data.get('city')}, {data.get('region')}")
+                return True
+            else:
+                print(f"-> [WARN] Status Code: {response.status_code}")
+                
+        except Exception as e:
+            pesan_error = str(e).split(":")[-1].strip()
+            print(f"-> [ERROR] Gagal ({pesan_error})")
+            
+        if attempt < max_retries:
+            print("   >> Menunggu 5 detik sebelum retry...")
+            time.sleep(5)
+            
+    print(f"-> [DEAD] Port {port} dinyatakan MATI setelah {max_retries}x percobaan.")
+    return False
 
 def buat_proxy_baru(port, config):
     print(f"   [ACTION] Request Port {port} (City: {config['city']}, State: {config['state']}, ZIP: {config['zip']})...")
@@ -70,7 +82,7 @@ def buat_proxy_baru(port, config):
     }
     
     try:
-        resp = requests.get(base_url, params=params, timeout=10)
+        resp = requests.get(base_url, params=params, timeout=20)
         
         try:
             data = resp.json()
@@ -111,9 +123,13 @@ while True:
         is_alive = cek_koneksi(port, config)
         
         if not is_alive:
-            buat_proxy_baru(port, config)
-            time.sleep(1) 
+            sukses_buat = buat_proxy_baru(port, config)
+            if sukses_buat:
+                print("   >> Menunggu 1 menit agar proxy yang baru terbuat stabil...")
+                time.sleep(60) 
+            else:
+                time.sleep(2) 
 
     print("\n>> Semua port aktif sudah dicek.")
-    print(">> Menunggu 1 menit (60 detik) untuk siklus berikutnya...")
-    time.sleep(60)
+    print(">> Menunggu 5 menit (300 detik) untuk siklus pengecekan berikutnya...")
+    time.sleep(300)
